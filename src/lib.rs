@@ -252,6 +252,9 @@ impl<'a> Stomp<'a> {
                 ],
                 None,
             ),
+            Disconnect {receipt} => Frame::new(
+                b"DISCONNECT", &[(b"receipt", receipt)], None
+            ),
             _ => unimplemented!(),
         }
     }
@@ -260,18 +263,26 @@ impl<'a> Stomp<'a> {
 use std::net;
 use std::io::prelude::*;
 
-pub fn connect() -> Result<net::TcpStream> {
-    let mut conn = net::TcpStream::connect("localhost:61613")?;
+pub fn connect(conn: &mut net::TcpStream) -> Result<()> {
     let msg = Stomp::Connect {
-        accept_version: b"1.2",
+        accept_version: b"1.1,1.2",
         host: b"0.0.0.0",
         login: None,
         passcode: None,
         heartbeat: None
     };
     let buffer = msg.to_frame().serialize();
-    conn.write_all(&buffer).unwrap();
-    Ok(conn)
+    conn.write_all(&buffer)?;
+    Ok(())
+}
+
+pub fn disconnect(conn: &mut net::TcpStream) -> Result<()> {
+    let msg = Stomp::Disconnect {
+        receipt: None
+    };
+    let buffer = msg.to_frame().serialize();
+    conn.write_all(&buffer)?;
+    Ok(())
 }
 
 #[cfg(test)]
