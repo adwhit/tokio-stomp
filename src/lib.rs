@@ -1,8 +1,8 @@
+#[macro_use]
+extern crate failure;
 extern crate hex;
 #[macro_use]
 extern crate nom;
-#[macro_use]
-extern crate failure;
 
 use nom::newline;
 
@@ -15,24 +15,66 @@ struct Frame<'a> {
     command: &'a [u8],
     // TODO use ArrayVec to keep headers on the stack
     headers: Vec<(&'a [u8], &'a [u8])>,
-    body: Option<&'a [u8]>
+    body: Option<&'a [u8]>,
+}
+
+impl<'a> Frame<'a> {
+    fn new(
+        command: &'a [u8],
+        headers: &[(&'a [u8], Option<&'a [u8]>)],
+        body: Option<&'a [u8]>,
+    ) -> Frame<'a> {
+        let headers = headers
+            .iter()
+            .filter_map(|&(k, v)| v.map(|i| (k, i)))
+            .collect();
+        Frame {
+            command,
+            headers,
+            body,
+        }
+    }
+
+    fn serialize(&self) -> Vec<u8> {
+        let mut buffer = Vec::with_capacity(self.command.len()  // TODO uhhhh
+                           + self.body.map(|b| b.len()).unwrap_or(0) + 100);
+        buffer.extend(self.command);
+        buffer.push(b'\n');
+        // TODO escaping. use bytes crate?
+        self.headers.iter().for_each(|&(k, v)| {
+            buffer.extend(k);
+            buffer.push(b':');
+            buffer.extend(v);
+            buffer.push(b'\n');
+        });
+        buffer.push(b'\n');
+        buffer.push(b'\x00');
+        buffer
+    }
 }
 
 named!(eol, preceded!(opt!(tag!("\r")), tag!("\n")));
 
-named!(header<(&[u8], &[u8])>,
-       pair!(
-           take_until_either!(":\n"),
-           preceded!(tag!(":"),
-                     map!(take_until_and_consume1!("\n"), strip_cr))));
+named!(
+    header<(&[u8], &[u8])>,
+    pair!(
+        take_until_either!(":\n"),
+        preceded!(tag!(":"), map!(take_until_and_consume1!("\n"), strip_cr))
+    )
+);
 
-named!(parse_frame<Frame>, do_parse!(
-    command: map!(take_until_and_consume!("\n"), strip_cr) >>
-    headers: many0!(header) >> eol >>
-    body: map!(take_until_and_consume!("\x00"),
-               |v| if v.is_empty() { None } else { Some(v) }) >>
-    (Frame { command, headers, body })
-));
+named!(
+    parse_frame<Frame>,
+    do_parse!(
+        command: map!(take_until_and_consume!("\n"), strip_cr) >>
+        headers: many0!(header) >> eol >>
+        body: map!(take_until_and_consume!("\x00"), |v| if v.is_empty() {
+            None
+        } else {
+            Some(v)
+        }) >> (Frame {command, headers, body,})
+    )
+);
 
 fn strip_cr(buf: &[u8]) -> &[u8] {
     let l = buf.len();
@@ -47,7 +89,7 @@ fn fetch_header<'a>(headers: &'a [(&'a [u8], &'a [u8])], key: &'a str) -> Option
     let kk = key.as_bytes();
     for &(k, v) in headers {
         if k == kk {
-            return Some(v)
+            return Some(v);
         }
     }
     None
@@ -80,16 +122,14 @@ impl<'a> Frame<'a> {
             b"SEND" => Send {
                 destination: eh(h, "destination")?,
                 transaction: fh(h, "transaction"),
-                body: self.body
+                body: self.body,
             },
             b"SUBSCRIBE" => Subscribe {
                 destination: eh(h, "destination")?,
                 id: eh(h, "id")?,
                 ack: fh(h, "ack"),
             },
-            b"UNSUBSCRIBE" => Unsubscribe {
-                id: eh(h, "id")?,
-            },
+            b"UNSUBSCRIBE" => Unsubscribe { id: eh(h, "id")? },
             b"ACK" => Ack {
                 id: eh(h, "id")?,
                 transaction: fh(h, "transaction"),
@@ -114,22 +154,20 @@ impl<'a> Frame<'a> {
                 destination: eh(h, "destination")?,
                 message_id: eh(h, "message-id")?,
                 subscription: eh(h, "subscription")?,
-                body: self.body
+                body: self.body,
             },
             b"RECEIPT" => Receipt {
                 receipt_id: eh(h, "receipt-id")?,
             },
             b"ERROR" => Error {
                 message: fh(h, "message-id"),
-                body: self.body
+                body: self.body,
             },
-            other => bail!("Frame not recognized: {}", String::from_utf8_lossy(other))
+            other => bail!("Frame not recognized: {}", String::from_utf8_lossy(other)),
         };
         Ok(out)
     }
 }
-
-
 
 enum Stomp<'a> {
     Connect {
@@ -148,7 +186,7 @@ enum Stomp<'a> {
     Send {
         destination: &'a [u8],
         transaction: Option<&'a [u8]>,
-        body: Option<&'a [u8]>
+        body: Option<&'a [u8]>,
     },
     Subscribe {
         destination: &'a [u8],
@@ -182,15 +220,58 @@ enum Stomp<'a> {
         destination: &'a [u8],
         message_id: &'a [u8],
         subscription: &'a [u8],
-        body: Option<&'a [u8]>
+        body: Option<&'a [u8]>,
     },
     Receipt {
-        receipt_id: &'a [u8]
+        receipt_id: &'a [u8],
     },
     Error {
         message: Option<&'a [u8]>,
-        body: Option<&'a [u8]>
+        body: Option<&'a [u8]>,
+    },
+}
+
+impl<'a> Stomp<'a> {
+    fn to_frame(&'a self) -> Frame<'a> {
+        use Stomp::*;
+        match *self {
+            Connect {
+                accept_version,
+                host,
+                login,
+                passcode,
+                heartbeat,
+            } => Frame::new(
+                b"CONNECT",
+                &[
+                    (b"accept-version", Some(accept_version)),
+                    (b"host", Some(host)),
+                    (b"login", login),
+                    (b"passcode", passcode),
+                    (b"heart-beat", heartbeat),
+                ],
+                None,
+            ),
+            _ => unimplemented!(),
+        }
     }
+}
+
+use std::net;
+use std::io::prelude::*;
+
+pub fn connect() -> Result<net::TcpStream> {
+    let mut conn = net::TcpStream::connect("localhost:61613")?;
+    let msg = Stomp::Connect {
+        accept_version: b"1.2",
+        host: b"0.0.0.0",
+        login: None,
+        passcode: None,
+        heartbeat: None
+    };
+    let buffer = msg.to_frame().serialize();
+    conn.write_all(&buffer).unwrap();
+    Ok(conn)
 }
 
 #[cfg(test)]
@@ -198,26 +279,25 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parse_init() {
-        let mut init = b"
-53 54 4f 4d 50 0a 61 63 63 65 70 74 2d 76 65 72
-73 69 6f 6e 3a 31 2e 32 0a 68 6f 73 74 3a 64 61
-74 61 66 65 65 64 73 2e 6e 61 74 69 6f 6e 61 6c
-72 61 69 6c 2e 63 6f 2e 75 6b 0a 6c 6f 67 69 6e
-3a 75 73 65 72 0a 70 61 73 73 63 6f 64 65
-3a 70 61 73 73 77 6f 72 64 0a 0a 00".to_vec();
-        init.retain(|elem| *elem != b' ' && *elem != b'\n');
-        let raw = hex::decode(init).unwrap();
-        println!("{}", String::from_utf8_lossy(&raw));
-        let (_, frame) = parse_frame(&raw).unwrap();
-        assert_eq!(frame.command, b"STOMP");
+    fn parse_and_serialize_connect() {
+        let data =
+b"CONNECT
+accept-version:1.2
+host:datafeeds.nationalrail.co.uk
+login:user
+passcode:password\n\n\x00".to_vec();
+        let (_, frame) = parse_frame(&data).unwrap();
+        assert_eq!(frame.command, b"CONNECT");
         let headers_expect: Vec<(&[u8], &[u8])> = vec![
             (&b"accept-version"[..], &b"1.2"[..]),
             (b"host", b"datafeeds.nationalrail.co.uk"),
             (b"login", b"user"),
-            (b"passcode", b"password")
+            (b"passcode", b"password"),
         ];
         assert_eq!(frame.headers, headers_expect);
         assert_eq!(frame.body, None);
+        let stomp = frame.to_stomp().unwrap();
+        let roundtrip = stomp.to_frame().serialize();
+        assert_eq!(roundtrip, data);
     }
 }
