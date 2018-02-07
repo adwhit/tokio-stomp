@@ -3,15 +3,55 @@ extern crate failure;
 extern crate hex;
 #[macro_use]
 extern crate nom;
+extern crate tokio_io;
+extern crate bytes;
+extern crate futures;
 
 use nom::newline;
+use tokio_io::codec;
+use bytes::{Bytes, BytesMut, BufMut};
+use futures::Stream;
 
 use std::collections::HashMap;
 
 type Result<T> = std::result::Result<T, failure::Error>;
 
+pub struct StompCodec;
+    // Strategy is to parse as normal and check header for content-length
+    // If content-length exists, take that quantity
+    // If not, take body until NULL
+
+impl codec::Decoder for StompCodec {
+    type Item = Bytes;
+    type Error = failure::Error;
+
+    fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>> {
+        let offset = match parse_frame(&src) {
+            Ok((remain, _)) => {
+                remain.as_ptr() as usize - src.as_ptr() as usize
+            }
+            Err(nom::Err::Incomplete(_)) => return Ok(None),
+            Err(e) => bail!("Parse failed")
+        };
+        let bytes = src.split_to(offset);
+        Ok(Some(bytes.into()))
+    }
+}
+
+impl codec::Encoder for StompCodec {
+    type Item = Frame<'static>;
+    type Error = failure::Error;
+
+    fn encode(&mut self, item: Self::Item, dst: &mut BytesMut) -> Result<()> {
+        let buf = item.serialize();
+        dst.reserve(buf.len());
+        dst.put(&buf);
+        Ok(())
+    }
+}
+
 #[derive(Debug)]
-struct Frame<'a> {
+pub struct Frame<'a> {
     command: &'a [u8],
     // TODO use ArrayVec to keep headers on the stack
     headers: Vec<(&'a [u8], &'a [u8])>,
@@ -64,7 +104,7 @@ named!(
 );
 
 named!(
-    parse_frame<Frame>,
+    pub parse_frame<Frame>,
     do_parse!(
         command: map!(take_until_and_consume!("\n"), strip_cr) >>
         headers: many0!(header) >> eol >>
@@ -77,9 +117,8 @@ named!(
 );
 
 fn strip_cr(buf: &[u8]) -> &[u8] {
-    let l = buf.len();
-    if buf[l - 1] == b'\r' {
-        &buf[..l - 1]
+    if let Some(&b'\r') = buf.last() {
+        &buf[..buf.len() - 1]
     } else {
         buf
     }
@@ -100,7 +139,7 @@ fn expect_header<'a>(headers: &'a [(&'a [u8], &'a [u8])], key: &'a str) -> Resul
 }
 
 impl<'a> Frame<'a> {
-    fn to_stomp(&'a self) -> Result<Stomp> {
+    pub fn to_stomp(&'a self) -> Result<Stomp> {
         use Stomp::*;
         use expect_header as eh;
         use fetch_header as fh;
@@ -169,7 +208,16 @@ impl<'a> Frame<'a> {
     }
 }
 
-enum Stomp<'a> {
+fn protocol<'a>(msg: &'a Stomp<'a>) -> Option<Stomp<'static>> {
+    use Stomp::*;
+    match *msg {
+        Connected {..} => unimplemented!(),
+        _ => unimplemented!()
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum Stomp<'a> {
     Connect {
         accept_version: &'a [u8],
         host: &'a [u8],
@@ -232,7 +280,7 @@ enum Stomp<'a> {
 }
 
 impl<'a> Stomp<'a> {
-    fn to_frame(&'a self) -> Frame<'a> {
+    pub fn to_frame(&'a self) -> Frame<'a> {
         use Stomp::*;
         match *self {
             Connect {
@@ -284,6 +332,30 @@ pub fn disconnect(conn: &mut net::TcpStream) -> Result<()> {
     conn.write_all(&buffer)?;
     Ok(())
 }
+
+// /// A `Stream` that represents a connection to a STOMP server
+// #[must_use = "Streams are lazy and do nothing unless polled"]
+// pub struct StompStream {
+//     buf: Vec<u8>,
+//     handle: Handle,
+//     address: Option<String>,
+//     body: Option<Body>,
+// }
+
+// impl StompStream {
+//     fn new(handle: &Handle, request: Request) -> StompStream {
+//         StompStream {
+//             buf: vec![],
+//             handle: handle.clone(),
+//             request: Some(request),
+//             response: None,
+//             body: None,
+//         }
+//     }
+// }
+
+// impl Stream for StompStream {
+// }
 
 #[cfg(test)]
 mod tests {

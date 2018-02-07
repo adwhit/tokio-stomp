@@ -7,3 +7,7 @@ authors = ["Alex Whitney <adwhit@fastmail.com>"]
 hex = "0.3.1"
 nom = "4.0.0-alpha2"
 failure = "0.1.1"
+bytes = "0.4.6"
+futures = "0.1.18"
+tokio-io = "0.1.4"
+tokio-core = "0.1.12"
