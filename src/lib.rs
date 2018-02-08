@@ -1,58 +1,26 @@
 #![feature(conservative_impl_trait)]
 
+extern crate bytes;
 #[macro_use]
 extern crate failure;
+extern crate futures;
 extern crate hex;
 #[macro_use]
 extern crate nom;
 extern crate tokio;
 extern crate tokio_io;
-extern crate bytes;
-extern crate futures;
 
-use tokio_io::codec::{Encoder, Decoder, Framed};
+use tokio_io::codec::{Decoder, Encoder, Framed};
 use tokio_io::AsyncRead;
-use bytes::{BytesMut, BufMut};
+use bytes::{BufMut, BytesMut};
 use futures::prelude::*;
 use futures::sync::mpsc;
-use futures::future::{ok as fok, err as ferr};
+use futures::future::{err as ferr, ok as fok};
 use tokio::net::TcpStream;
 use tokio::executor::current_thread::spawn;
 
 type Result<T> = std::result::Result<T, failure::Error>;
 type Transport = Framed<TcpStream, StompCodec>;
-
-pub struct StompCodec;
-
-impl Decoder for StompCodec {
-    type Item = ServerStomp;
-    type Error = failure::Error;
-
-    fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>> {
-        let offset = match parse_frame(&src) {
-            Ok((remain, _)) => {
-                remain.as_ptr() as usize - src.as_ptr() as usize
-            }
-            Err(nom::Err::Incomplete(_)) => return Ok(None),
-            Err(e) => bail!("Parse failed: {:?}", e)
-        };
-        let bytes = src.split_to(offset);
-        let item = parse_frame(&bytes).unwrap().1.to_server_stomp();
-        item.map(|v| Some(v))
-    }
-}
-
-impl Encoder for StompCodec {
-    type Item = ClientStomp;
-    type Error = failure::Error;
-
-    fn encode(&mut self, item: Self::Item, dst: &mut BytesMut) -> Result<()> {
-        let buf = item.to_frame().serialize();
-        dst.reserve(buf.len());
-        dst.put(&buf);
-        Ok(())
-    }
-}
 
 #[derive(Debug)]
 pub struct Frame<'a> {
@@ -80,8 +48,10 @@ impl<'a> Frame<'a> {
     }
 
     fn serialize(&self) -> Vec<u8> {
-        let mut buffer = Vec::with_capacity(self.command.len()  // TODO uhhhh
-                           + self.body.map(|b| b.len()).unwrap_or(0) + 100);
+        let mut buffer = Vec::with_capacity(
+            self.command.len()  // TODO uhhhh
+                           + self.body.map(|b| b.len()).unwrap_or(0) + 100,
+        );
         buffer.extend(self.command);
         buffer.push(b'\n');
         // TODO escaping. use bytes crate?
@@ -135,7 +105,7 @@ fn fetch_header<'a>(headers: &'a [(&'a [u8], &'a [u8])], key: &'a str) -> Option
     let kk = key.as_bytes();
     for &(k, v) in headers {
         if k == kk {
-            return String::from_utf8(v.to_vec()).ok()
+            return String::from_utf8(v.to_vec()).ok();
         }
     }
     None
@@ -167,30 +137,30 @@ impl<'a> Frame<'a> {
                 transaction: fh(h, "transaction"),
                 body: self.body.map(|v| v.to_vec()),
             },
-            // b"SUBSCRIBE" => Subscribe {
-            //     destination: eh(h, "destination")?,
-            //     id: eh(h, "id")?,
-            //     ack: fh(h, "ack"),
-            // },
-            // b"UNSUBSCRIBE" => Unsubscribe { id: eh(h, "id")? },
-            // b"ACK" => Ack {
-            //     id: eh(h, "id")?,
-            //     transaction: fh(h, "transaction"),
-            // },
-            // b"NACK" => Nack {
-            //     id: eh(h, "id")?,
-            //     transaction: fh(h, "transaction"),
-            // },
-            // b"BEGIN" => Begin {
-            //     transaction: eh(h, "transaction")?,
-            // },
-            // b"COMMIT" => Commit {
-            //     transaction: eh(h, "transaction")?,
-            // },
-            // b"ABORT" => Abort {
-            //     transaction: eh(h, "transaction")?,
-            // },
-            other => bail!("Frame not recognized: {}", String::from_utf8_lossy(other)),
+            b"SUBSCRIBE" => Subscribe {
+                destination: eh(h, "destination")?,
+                id: eh(h, "id")?,
+                ack: fh(h, "ack"),
+            },
+            b"UNSUBSCRIBE" => Unsubscribe { id: eh(h, "id")? },
+            b"ACK" => Ack {
+                id: eh(h, "id")?,
+                transaction: fh(h, "transaction"),
+            },
+            b"NACK" => Nack {
+                id: eh(h, "id")?,
+                transaction: fh(h, "transaction"),
+            },
+            b"BEGIN" => Begin {
+                transaction: eh(h, "transaction")?,
+            },
+            b"COMMIT" => Commit {
+                transaction: eh(h, "transaction")?,
+            },
+            b"ABORT" => Abort {
+                transaction: eh(h, "transaction")?,
+            },
+            other => bail!("Frame not recognized: {:?}", String::from_utf8_lossy(other)),
         };
         Ok(out)
     }
@@ -213,14 +183,14 @@ impl<'a> Frame<'a> {
                 subscription: eh(h, "subscription")?,
                 body: self.body.map(|v| v.to_vec()),
             },
-            // b"RECEIPT" => Receipt {
-            //     receipt_id: eh(h, "receipt-id")?,
-            // },
+            b"RECEIPT" => Receipt {
+                receipt_id: eh(h, "receipt-id")?,
+            },
             b"ERROR" => Error {
                 message: fh(h, "message-id"),
                 body: self.body.map(|v| v.to_vec()),
             },
-            other => bail!("Frame not recognized: {}", String::from_utf8_lossy(other)),
+            other => bail!("Frame not recognized: {:?}", String::from_utf8_lossy(other)),
         };
         Ok(out)
     }
@@ -238,11 +208,11 @@ pub enum ServerStomp {
         destination: String,
         message_id: String,
         subscription: String,
-        body: Option<Vec<u8>>
+        body: Option<Vec<u8>>,
     },
-    // Receipt {
-    //     receipt_id: &'a [u8],
-    // },
+    Receipt {
+        receipt_id: String,
+    },
     Error {
         message: Option<String>,
         body: Option<Vec<u8>>,
@@ -261,33 +231,33 @@ pub enum ClientStomp {
     Send {
         destination: String,
         transaction: Option<String>,
-        body: Option<Vec<u8>>
+        body: Option<Vec<u8>>,
     },
-    // Subscribe {
-    //     destination: &'a [u8],
-    //     id: &'a [u8],
-    //     ack: Option<&'a [u8]>,
-    // },
-    // Unsubscribe {
-    //     id: &'a [u8],
-    // },
-    // Ack {
-    //     id: &'a [u8],
-    //     transaction: Option<&'a [u8]>,
-    // },
-    // Nack {
-    //     id: &'a [u8],
-    //     transaction: Option<&'a [u8]>,
-    // },
-    // Begin {
-    //     transaction: &'a [u8],
-    // },
-    // Commit {
-    //     transaction: &'a [u8],
-    // },
-    // Abort {
-    //     transaction: &'a [u8],
-    // },
+    Subscribe {
+        destination: String,
+        id: String,
+        ack: Option<String>
+    },
+    Unsubscribe {
+        id: String,
+    },
+    Ack {
+        id: String,
+        transaction: Option<String>,
+    },
+    Nack {
+        id: String,
+        transaction: Option<String>,
+    },
+    Begin {
+        transaction: String,
+    },
+    Commit {
+        transaction: String,
+    },
+    Abort {
+        transaction: String
+    },
     Disconnect {
         receipt: Option<String>,
     },
@@ -319,11 +289,63 @@ impl ClientStomp {
                 ],
                 None,
             ),
-            Disconnect {ref receipt} => Frame::new(
-                b"DISCONNECT", &[(b"receipt", b(&receipt))], None
+            Disconnect { ref receipt } => {
+                Frame::new(b"DISCONNECT", &[(b"receipt", b(&receipt))], None)
+            }
+            Subscribe {
+                ref destination,
+                ref id,
+                ref ack,
+            } => Frame::new(
+                b"SUBSCRIBE",
+                &[
+                    (b"destination", Some(destination.as_bytes())),
+                    (b"id", Some(id.as_bytes())),
+                    (b"ack", b(ack)),
+                ],
+                None,
+            ),
+            Unsubscribe {
+                ref id,
+            } => Frame::new(
+                b"UNSUBSCRIBE",
+                &[
+                    (b"id", Some(id.as_bytes())),
+                ],
+                None,
             ),
             _ => unimplemented!(),
         }
+    }
+}
+
+pub struct StompCodec;
+
+impl Decoder for StompCodec {
+    type Item = ServerStomp;
+    type Error = failure::Error;
+
+    fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>> {
+        let offset = match parse_frame(&src) {
+            Ok((remain, _)) => remain.as_ptr() as usize - src.as_ptr() as usize,
+            Err(nom::Err::Incomplete(_)) => return Ok(None),
+            Err(e) => bail!("Parse failed: {:?}", e),
+        };
+        let bytes = src.split_to(offset);
+        let item = parse_frame(&bytes).unwrap().1.to_server_stomp();
+        item.map(|v| Some(v))
+    }
+}
+
+impl Encoder for StompCodec {
+    type Item = ClientStomp;
+    type Error = failure::Error;
+
+    fn encode(&mut self, item: Self::Item, dst: &mut BytesMut) -> Result<()> {
+        let buf = item.to_frame().serialize();
+        dst.reserve(buf.len());
+        dst.put(&buf);
+        Ok(())
     }
 }
 
@@ -338,16 +360,23 @@ pub fn connect(address: &str) -> Result<(StompStream, mpsc::UnboundedSender<Clie
         })
         .and_then(|tcp| {
             let (sink, stream) = tcp.split();
-            let fsink = sink.send_all(rx.map_err(|()| format_err!("Channel closed"))).map(|_| ()).map_err(|e| eprintln!("{}", e));
+            let fsink = sink.send_all(rx.map_err(|()| format_err!("Channel closed")))
+                .map(|_| println!("Sink closed"))
+                .map_err(|e| eprintln!("{}", e));
             spawn(fsink);
             fok(stream)
         })
         .flatten_stream();
-    Ok((StompStream {inner: Box::new(inner)}, tx))
+    Ok((
+        StompStream {
+            inner: Box::new(inner),
+        },
+        tx,
+    ))
 }
 
 pub struct StompStream {
-    inner: Box<Stream<Item=ServerStomp, Error=failure::Error>>
+    inner: Box<Stream<Item = ServerStomp, Error = failure::Error>>,
 }
 
 impl Stream for StompStream {
@@ -359,20 +388,20 @@ impl Stream for StompStream {
     }
 }
 
-fn handshake(transport: Transport) -> impl Future<Item=Transport, Error=failure::Error> {
+fn handshake(transport: Transport) -> impl Future<Item = Transport, Error = failure::Error> {
     let msg = ClientStomp::Connect {
         accept_version: "1.1,1.2".into(),
         host: "0.0.0.0".into(),
         login: None,
         passcode: None,
-        heartbeat: None
+        heartbeat: None,
     };
     transport
         .send(msg)
-        .and_then(|transport| transport.into_future()
-                  .map_err(|(e, _)| e.into()))
+        .and_then(|transport| transport.into_future().map_err(|(e, _)| e.into()))
         .and_then(|(msg, stream)| {
-            if let Some(ServerStomp::Connected {..}) = msg {
+            println!("{:?}", msg);
+            if let Some(ServerStomp::Connected { .. }) = msg {
                 fok(stream)
             } else {
                 ferr(format_err!("unexpected reply"))
@@ -386,12 +415,12 @@ mod tests {
 
     #[test]
     fn parse_and_serialize_connect() {
-        let data =
-b"CONNECT
+        let data = b"CONNECT
 accept-version:1.2
 host:datafeeds.nationalrail.co.uk
 login:user
-passcode:password\n\n\x00".to_vec();
+passcode:password\n\n\x00"
+            .to_vec();
         let (_, frame) = parse_frame(&data).unwrap();
         assert_eq!(frame.command, b"CONNECT");
         let headers_expect: Vec<(&[u8], &[u8])> = vec![
