@@ -14,8 +14,10 @@ use tokio_io::codec::{Encoder, Decoder, Framed};
 use tokio_io::AsyncRead;
 use bytes::{BytesMut, BufMut};
 use futures::prelude::*;
+use futures::sync::mpsc;
 use futures::future::{ok as fok, err as ferr};
 use tokio::net::TcpStream;
+use tokio::executor::current_thread::spawn;
 
 type Result<T> = std::result::Result<T, failure::Error>;
 type Transport = Framed<TcpStream, StompCodec>;
@@ -325,28 +327,27 @@ impl ClientStomp {
     }
 }
 
-pub struct StompStream {
-    inner: Box<Stream<Item=ServerStomp, Error=failure::Error>>
+pub fn connect(address: &str) -> Result<(StompStream, mpsc::UnboundedSender<ClientStomp>)> {
+    let (tx, rx) = mpsc::unbounded();
+    let addr = address.parse()?;
+    let inner = TcpStream::connect(&addr)
+        .map_err(|e| e.into())
+        .and_then(|tcp| {
+            let transport = tcp.framed(StompCodec);
+            handshake(transport)
+        })
+        .and_then(|tcp| {
+            let (sink, stream) = tcp.split();
+            let fsink = sink.send_all(rx.map_err(|()| format_err!("Channel closed"))).map(|_| ()).map_err(|e| eprintln!("{}", e));
+            spawn(fsink);
+            fok(stream)
+        })
+        .flatten_stream();
+    Ok((StompStream {inner: Box::new(inner)}, tx))
 }
 
-impl StompStream {
-    pub fn new(address: &str) -> Result<StompStream> {
-        let addr = address.parse()?;
-        let inner = TcpStream::connect(&addr)
-            .map_err(|e| e.into())
-            .and_then(|tcp| {
-                let transport = tcp.framed(StompCodec);
-                handshake(transport)
-            })
-            // .and_then(|stream| {
-            //     let msg = Stomp::Disconnect {
-            //         receipt: None
-            //     }.to_frame();
-            //     stream.send(msg).map_err(|e| e.into())
-            // })
-            .flatten_stream();
-        Ok(StompStream {inner: Box::new(inner)})
-    }
+pub struct StompStream {
+    inner: Box<Stream<Item=ServerStomp, Error=failure::Error>>
 }
 
 impl Stream for StompStream {
