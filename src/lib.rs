@@ -17,9 +17,6 @@ use std::collections::HashMap;
 type Result<T> = std::result::Result<T, failure::Error>;
 
 pub struct StompCodec;
-    // Strategy is to parse as normal and check header for content-length
-    // If content-length exists, take that quantity
-    // If not, take body until NULL
 
 impl codec::Decoder for StompCodec {
     type Item = Bytes;
@@ -103,6 +100,9 @@ named!(
     )
 );
 
+// TODO Strategy is to parse as normal and check header for content-length
+// If content-length exists, take that quantity
+// If not, take body until NULL
 named!(
     pub parse_frame<Frame>,
     do_parse!(
