@@ -62,6 +62,9 @@ impl<'a> Frame<'a> {
             buffer.push(b'\n');
         });
         buffer.push(b'\n');
+        if let Some(body) = self.body {
+            buffer.extend(body);
+        }
         buffer.push(b'\x00');
         buffer
     }
@@ -89,7 +92,7 @@ named!(
             None
         } else {
             Some(v)
-        }) >> (Frame {command, headers, body,})
+        }) >> many0!(complete!(eol)) >> (Frame {command, headers, body,})
     )
 );
 
@@ -314,6 +317,17 @@ impl ClientStomp {
                 ],
                 None,
             ),
+            Send {
+                ref destination,
+                ref transaction,
+                ref body,
+            } => Frame::new(
+                b"SEND",
+                &[
+                    (b"destination", Some(destination.as_bytes())),
+                    (b"id", b(transaction))
+                ],
+                body.as_ref().map(|v| v.as_ref())),
             _ => unimplemented!(),
         }
     }
@@ -326,6 +340,7 @@ impl Decoder for StompCodec {
     type Error = failure::Error;
 
     fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>> {
+        println!("{:?}", String::from_utf8_lossy(&src));
         let offset = match parse_frame(&src) {
             Ok((remain, _)) => remain.as_ptr() as usize - src.as_ptr() as usize,
             Err(nom::Err::Incomplete(_)) => return Ok(None),

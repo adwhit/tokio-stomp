@@ -20,11 +20,18 @@ fn main() {
     std::thread::spawn(move || {
         std::thread::sleep_ms(1000);
         tx.unbounded_send(ClientStomp::Subscribe {
-            destination: "thingy".into(),
+            destination: "rusty".into(),
             id: "myid".into(),
             ack: None,
         }).unwrap();
         println!("Subscribe sent");
+        std::thread::sleep_ms(1000);
+        tx.unbounded_send(ClientStomp::Send {
+            destination: "rusty".into(),
+            transaction: None,
+            body: Some(b"Hello there rustaceans!".to_vec())
+        });
+        println!("Message sent");
         std::thread::sleep_ms(1000);
         tx.unbounded_send(ClientStomp::Unsubscribe { id: "myid".into() });
         println!("Unsubscribe sent");
