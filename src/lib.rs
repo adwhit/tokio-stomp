@@ -1,25 +1,29 @@
+#![feature(conservative_impl_trait)]
+
 #[macro_use]
 extern crate failure;
 extern crate hex;
 #[macro_use]
 extern crate nom;
+extern crate tokio;
 extern crate tokio_io;
 extern crate bytes;
 extern crate futures;
 
-use nom::newline;
-use tokio_io::codec;
-use bytes::{Bytes, BytesMut, BufMut};
-use futures::Stream;
-
-use std::collections::HashMap;
+use tokio_io::codec::{Encoder, Decoder, Framed};
+use tokio_io::AsyncRead;
+use bytes::{BytesMut, BufMut};
+use futures::prelude::*;
+use futures::future::{ok as fok, err as ferr};
+use tokio::net::TcpStream;
 
 type Result<T> = std::result::Result<T, failure::Error>;
+type Transport = Framed<TcpStream, StompCodec>;
 
 pub struct StompCodec;
 
-impl codec::Decoder for StompCodec {
-    type Item = Bytes;
+impl Decoder for StompCodec {
+    type Item = ServerStomp;
     type Error = failure::Error;
 
     fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>> {
@@ -28,19 +32,20 @@ impl codec::Decoder for StompCodec {
                 remain.as_ptr() as usize - src.as_ptr() as usize
             }
             Err(nom::Err::Incomplete(_)) => return Ok(None),
-            Err(e) => bail!("Parse failed")
+            Err(e) => bail!("Parse failed: {:?}", e)
         };
         let bytes = src.split_to(offset);
-        Ok(Some(bytes.into()))
+        let item = parse_frame(&bytes).unwrap().1.to_server_stomp();
+        item.map(|v| Some(v))
     }
 }
 
-impl codec::Encoder for StompCodec {
-    type Item = Frame<'static>;
+impl Encoder for StompCodec {
+    type Item = ClientStomp;
     type Error = failure::Error;
 
     fn encode(&mut self, item: Self::Item, dst: &mut BytesMut) -> Result<()> {
-        let buf = item.serialize();
+        let buf = item.to_frame().serialize();
         dst.reserve(buf.len());
         dst.put(&buf);
         Ok(())
@@ -124,23 +129,23 @@ fn strip_cr(buf: &[u8]) -> &[u8] {
     }
 }
 
-fn fetch_header<'a>(headers: &'a [(&'a [u8], &'a [u8])], key: &'a str) -> Option<&'a [u8]> {
+fn fetch_header<'a>(headers: &'a [(&'a [u8], &'a [u8])], key: &'a str) -> Option<String> {
     let kk = key.as_bytes();
     for &(k, v) in headers {
         if k == kk {
-            return Some(v);
+            return String::from_utf8(v.to_vec()).ok()
         }
     }
     None
 }
 
-fn expect_header<'a>(headers: &'a [(&'a [u8], &'a [u8])], key: &'a str) -> Result<&'a [u8]> {
+fn expect_header<'a>(headers: &'a [(&'a [u8], &'a [u8])], key: &'a str) -> Result<String> {
     fetch_header(headers, key).ok_or_else(|| format_err!("Expected header {} missing", key))
 }
 
 impl<'a> Frame<'a> {
-    pub fn to_stomp(&'a self) -> Result<Stomp> {
-        use Stomp::*;
+    pub fn to_client_stomp(&'a self) -> Result<ClientStomp> {
+        use ClientStomp::*;
         use expect_header as eh;
         use fetch_header as fh;
         let h = &self.headers;
@@ -152,55 +157,66 @@ impl<'a> Frame<'a> {
                 passcode: fh(h, "passcode"),
                 heartbeat: fh(h, "heart-beat"),
             },
+            b"DISCONNECT" => Disconnect {
+                receipt: fh(h, "receipt"),
+            },
+            b"SEND" => Send {
+                destination: eh(h, "destination")?,
+                transaction: fh(h, "transaction"),
+                body: self.body.map(|v| v.to_vec()),
+            },
+            // b"SUBSCRIBE" => Subscribe {
+            //     destination: eh(h, "destination")?,
+            //     id: eh(h, "id")?,
+            //     ack: fh(h, "ack"),
+            // },
+            // b"UNSUBSCRIBE" => Unsubscribe { id: eh(h, "id")? },
+            // b"ACK" => Ack {
+            //     id: eh(h, "id")?,
+            //     transaction: fh(h, "transaction"),
+            // },
+            // b"NACK" => Nack {
+            //     id: eh(h, "id")?,
+            //     transaction: fh(h, "transaction"),
+            // },
+            // b"BEGIN" => Begin {
+            //     transaction: eh(h, "transaction")?,
+            // },
+            // b"COMMIT" => Commit {
+            //     transaction: eh(h, "transaction")?,
+            // },
+            // b"ABORT" => Abort {
+            //     transaction: eh(h, "transaction")?,
+            // },
+            other => bail!("Frame not recognized: {}", String::from_utf8_lossy(other)),
+        };
+        Ok(out)
+    }
+
+    pub fn to_server_stomp(&'a self) -> Result<ServerStomp> {
+        use ServerStomp::*;
+        use expect_header as eh;
+        use fetch_header as fh;
+        let h = &self.headers;
+        let out = match self.command {
             b"CONNECTED" => Connected {
                 version: eh(h, "version")?,
                 session: fh(h, "session"),
                 server: fh(h, "server"),
                 heartbeat: fh(h, "heart-beat"),
             },
-            b"SEND" => Send {
-                destination: eh(h, "destination")?,
-                transaction: fh(h, "transaction"),
-                body: self.body,
-            },
-            b"SUBSCRIBE" => Subscribe {
-                destination: eh(h, "destination")?,
-                id: eh(h, "id")?,
-                ack: fh(h, "ack"),
-            },
-            b"UNSUBSCRIBE" => Unsubscribe { id: eh(h, "id")? },
-            b"ACK" => Ack {
-                id: eh(h, "id")?,
-                transaction: fh(h, "transaction"),
-            },
-            b"NACK" => Nack {
-                id: eh(h, "id")?,
-                transaction: fh(h, "transaction"),
-            },
-            b"BEGIN" => Begin {
-                transaction: eh(h, "transaction")?,
-            },
-            b"COMMIT" => Commit {
-                transaction: eh(h, "transaction")?,
-            },
-            b"ABORT" => Abort {
-                transaction: eh(h, "transaction")?,
-            },
-            b"DISCONNECT" => Disconnect {
-                receipt: fh(h, "receipt"),
-            },
             b"MESSAGE" => Message {
                 destination: eh(h, "destination")?,
                 message_id: eh(h, "message-id")?,
                 subscription: eh(h, "subscription")?,
-                body: self.body,
+                body: self.body.map(|v| v.to_vec()),
             },
-            b"RECEIPT" => Receipt {
-                receipt_id: eh(h, "receipt-id")?,
-            },
+            // b"RECEIPT" => Receipt {
+            //     receipt_id: eh(h, "receipt-id")?,
+            // },
             b"ERROR" => Error {
                 message: fh(h, "message-id"),
-                body: self.body,
+                body: self.body.map(|v| v.to_vec()),
             },
             other => bail!("Frame not recognized: {}", String::from_utf8_lossy(other)),
         };
@@ -208,154 +224,160 @@ impl<'a> Frame<'a> {
     }
 }
 
-fn protocol<'a>(msg: &'a Stomp<'a>) -> Option<Stomp<'static>> {
-    use Stomp::*;
-    match *msg {
-        Connected {..} => unimplemented!(),
-        _ => unimplemented!()
-    }
+#[derive(Debug, Clone)]
+pub enum ServerStomp {
+    Connected {
+        version: String,
+        session: Option<String>,
+        server: Option<String>,
+        heartbeat: Option<String>,
+    },
+    Message {
+        destination: String,
+        message_id: String,
+        subscription: String,
+        body: Option<Vec<u8>>
+    },
+    // Receipt {
+    //     receipt_id: &'a [u8],
+    // },
+    Error {
+        message: Option<String>,
+        body: Option<Vec<u8>>,
+    },
 }
 
 #[derive(Debug, Clone)]
-pub enum Stomp<'a> {
+pub enum ClientStomp {
     Connect {
-        accept_version: &'a [u8],
-        host: &'a [u8],
-        login: Option<&'a [u8]>,
-        passcode: Option<&'a [u8]>,
-        heartbeat: Option<&'a [u8]>,
-    },
-    Connected {
-        version: &'a [u8],
-        session: Option<&'a [u8]>,
-        server: Option<&'a [u8]>,
-        heartbeat: Option<&'a [u8]>,
+        accept_version: String,
+        host: String,
+        login: Option<String>,
+        passcode: Option<String>,
+        heartbeat: Option<String>,
     },
     Send {
-        destination: &'a [u8],
-        transaction: Option<&'a [u8]>,
-        body: Option<&'a [u8]>,
+        destination: String,
+        transaction: Option<String>,
+        body: Option<Vec<u8>>
     },
-    Subscribe {
-        destination: &'a [u8],
-        id: &'a [u8],
-        ack: Option<&'a [u8]>,
-    },
-    Unsubscribe {
-        id: &'a [u8],
-    },
-    Ack {
-        id: &'a [u8],
-        transaction: Option<&'a [u8]>,
-    },
-    Nack {
-        id: &'a [u8],
-        transaction: Option<&'a [u8]>,
-    },
-    Begin {
-        transaction: &'a [u8],
-    },
-    Commit {
-        transaction: &'a [u8],
-    },
-    Abort {
-        transaction: &'a [u8],
-    },
+    // Subscribe {
+    //     destination: &'a [u8],
+    //     id: &'a [u8],
+    //     ack: Option<&'a [u8]>,
+    // },
+    // Unsubscribe {
+    //     id: &'a [u8],
+    // },
+    // Ack {
+    //     id: &'a [u8],
+    //     transaction: Option<&'a [u8]>,
+    // },
+    // Nack {
+    //     id: &'a [u8],
+    //     transaction: Option<&'a [u8]>,
+    // },
+    // Begin {
+    //     transaction: &'a [u8],
+    // },
+    // Commit {
+    //     transaction: &'a [u8],
+    // },
+    // Abort {
+    //     transaction: &'a [u8],
+    // },
     Disconnect {
-        receipt: Option<&'a [u8]>,
-    },
-    Message {
-        destination: &'a [u8],
-        message_id: &'a [u8],
-        subscription: &'a [u8],
-        body: Option<&'a [u8]>,
-    },
-    Receipt {
-        receipt_id: &'a [u8],
-    },
-    Error {
-        message: Option<&'a [u8]>,
-        body: Option<&'a [u8]>,
+        receipt: Option<String>,
     },
 }
 
-impl<'a> Stomp<'a> {
-    pub fn to_frame(&'a self) -> Frame<'a> {
-        use Stomp::*;
+fn opt_str_to_bytes<'a>(s: &'a Option<String>) -> Option<&'a [u8]> {
+    s.as_ref().map(|v| v.as_bytes())
+}
+
+impl ClientStomp {
+    pub fn to_frame<'a>(&'a self) -> Frame<'a> {
+        use opt_str_to_bytes as b;
+        use ClientStomp::*;
         match *self {
             Connect {
-                accept_version,
-                host,
-                login,
-                passcode,
-                heartbeat,
+                ref accept_version,
+                ref host,
+                ref login,
+                ref passcode,
+                ref heartbeat,
             } => Frame::new(
                 b"CONNECT",
                 &[
-                    (b"accept-version", Some(accept_version)),
-                    (b"host", Some(host)),
-                    (b"login", login),
-                    (b"passcode", passcode),
-                    (b"heart-beat", heartbeat),
+                    (b"accept-version", Some(accept_version.as_bytes())),
+                    (b"host", Some(host.as_bytes())),
+                    (b"login", b(login)),
+                    (b"passcode", b(passcode)),
+                    (b"heart-beat", b(heartbeat)),
                 ],
                 None,
             ),
-            Disconnect {receipt} => Frame::new(
-                b"DISCONNECT", &[(b"receipt", receipt)], None
+            Disconnect {ref receipt} => Frame::new(
+                b"DISCONNECT", &[(b"receipt", b(&receipt))], None
             ),
             _ => unimplemented!(),
         }
     }
 }
 
-use std::net;
-use std::io::prelude::*;
+pub struct StompStream {
+    inner: Box<Stream<Item=ServerStomp, Error=failure::Error>>
+}
 
-pub fn connect(conn: &mut net::TcpStream) -> Result<()> {
-    let msg = Stomp::Connect {
-        accept_version: b"1.1,1.2",
-        host: b"0.0.0.0",
+impl StompStream {
+    pub fn new(address: &str) -> Result<StompStream> {
+        let addr = address.parse()?;
+        let inner = TcpStream::connect(&addr)
+            .map_err(|e| e.into())
+            .and_then(|tcp| {
+                let transport = tcp.framed(StompCodec);
+                handshake(transport)
+            })
+            // .and_then(|stream| {
+            //     let msg = Stomp::Disconnect {
+            //         receipt: None
+            //     }.to_frame();
+            //     stream.send(msg).map_err(|e| e.into())
+            // })
+            .flatten_stream();
+        Ok(StompStream {inner: Box::new(inner)})
+    }
+}
+
+impl Stream for StompStream {
+    type Item = ServerStomp;
+    type Error = failure::Error;
+
+    fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
+        self.inner.poll()
+    }
+}
+
+fn handshake(transport: Transport) -> impl Future<Item=Transport, Error=failure::Error> {
+    let msg = ClientStomp::Connect {
+        accept_version: "1.1,1.2".into(),
+        host: "0.0.0.0".into(),
         login: None,
         passcode: None,
         heartbeat: None
     };
-    let buffer = msg.to_frame().serialize();
-    conn.write_all(&buffer)?;
-    Ok(())
+    transport
+        .send(msg)
+        .and_then(|transport| transport.into_future()
+                  .map_err(|(e, _)| e.into()))
+        .and_then(|(msg, stream)| {
+            if let Some(ServerStomp::Connected {..}) = msg {
+                fok(stream)
+            } else {
+                ferr(format_err!("unexpected reply"))
+            }
+        })
 }
-
-pub fn disconnect(conn: &mut net::TcpStream) -> Result<()> {
-    let msg = Stomp::Disconnect {
-        receipt: None
-    };
-    let buffer = msg.to_frame().serialize();
-    conn.write_all(&buffer)?;
-    Ok(())
-}
-
-// /// A `Stream` that represents a connection to a STOMP server
-// #[must_use = "Streams are lazy and do nothing unless polled"]
-// pub struct StompStream {
-//     buf: Vec<u8>,
-//     handle: Handle,
-//     address: Option<String>,
-//     body: Option<Body>,
-// }
-
-// impl StompStream {
-//     fn new(handle: &Handle, request: Request) -> StompStream {
-//         StompStream {
-//             buf: vec![],
-//             handle: handle.clone(),
-//             request: Some(request),
-//             response: None,
-//             body: None,
-//         }
-//     }
-// }
-
-// impl Stream for StompStream {
-// }
 
 #[cfg(test)]
 mod tests {
@@ -379,7 +401,7 @@ passcode:password\n\n\x00".to_vec();
         ];
         assert_eq!(frame.headers, headers_expect);
         assert_eq!(frame.body, None);
-        let stomp = frame.to_stomp().unwrap();
+        let stomp = frame.to_client_stomp().unwrap();
         let roundtrip = stomp.to_frame().serialize();
         assert_eq!(roundtrip, data);
     }
