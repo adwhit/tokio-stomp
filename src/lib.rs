@@ -47,6 +47,7 @@ impl<'a> Frame<'a> {
         }
     }
 
+    // TODO make this an "impl Write"
     fn serialize(&self) -> Vec<u8> {
         let mut buffer = Vec::with_capacity(
             self.command.len()  // TODO uhhhh
@@ -61,9 +62,12 @@ impl<'a> Frame<'a> {
             buffer.extend(v);
             buffer.push(b'\n');
         });
-        buffer.push(b'\n');
         if let Some(body) = self.body {
+            buffer.extend(&body_content_length(&body));
+            buffer.push(b'\n');
             buffer.extend(body);
+        } else {
+            buffer.push(b'\n');
         }
         buffer.push(b'\x00');
         buffer
@@ -105,8 +109,8 @@ named!(
         headers: many0!(header) >> eol >>
         body: switch!(value!(get_content_length(&headers)),
             Some(v) => map!(take!(v), Some) |
-            None => map!(take_until_and_consume!("\x00"), is_empty_slice)
-        ) >> many0!(complete!(eol)) >>
+            None => map!(take_until!("\x00"), is_empty_slice)
+        ) >> tag!("\x00") >> many0!(complete!(eol)) >>
         (Frame {command, headers, body})
     )
 );
@@ -288,6 +292,10 @@ pub enum ClientStomp {
 
 fn opt_str_to_bytes<'a>(s: &'a Option<String>) -> Option<&'a [u8]> {
     s.as_ref().map(|v| v.as_bytes())
+}
+
+fn body_content_length(body: &[u8]) -> Vec<u8> {
+    format!("content-length:{}\n", body.len()).into()
 }
 
 impl ClientStomp {
