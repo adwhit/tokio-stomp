@@ -80,22 +80,34 @@ named!(
     )
 );
 
-// TODO Strategy is to parse as normal and check header for content-length
-// If content-length exists, take that quantity
-// If not, take body until NULL
+fn get_content_length(headers: &[(&[u8], &[u8])]) -> Option<u32> {
+    for h in headers {
+        if h.0 == b"content-length" {
+            return std::str::from_utf8(h.1).ok()
+                .and_then(|v| v.parse::<u32>().ok())
+        }
+    }
+    None
+}
+
+fn is_empty_slice(s: &[u8]) -> Option<&[u8]> {
+    if s.is_empty() {
+        None
+    } else {
+        Some(s)
+    }
+}
+
 named!(
     parse_frame<Frame>,
     do_parse!(
-        command: map!(take_until_and_consume!("\n"), strip_cr) >> headers: many0!(header) >> eol
-            >> body: map!(take_until_and_consume!("\x00"), |v| if v.is_empty() {
-                None
-            } else {
-                Some(v)
-            }) >> many0!(complete!(eol)) >> (Frame {
-            command,
-            headers,
-            body,
-        })
+        command: map!(take_until_and_consume!("\n"), strip_cr) >>
+        headers: many0!(header) >> eol >>
+        body: switch!(value!(get_content_length(&headers)),
+            Some(v) => map!(take!(v), Some) |
+            None => map!(take_until_and_consume!("\x00"), is_empty_slice)
+        ) >> many0!(complete!(eol)) >>
+        (Frame {command, headers, body})
     )
 );
 
@@ -482,7 +494,7 @@ mod tests {
     fn parse_and_serialize_connect() {
         let data = b"CONNECT
 accept-version:1.2
-host:datafeeds.nationalrail.co.uk
+host:datafeeds.here.co.uk
 login:user
 passcode:password\n\n\x00"
             .to_vec();
@@ -490,7 +502,7 @@ passcode:password\n\n\x00"
         assert_eq!(frame.command, b"CONNECT");
         let headers_expect: Vec<(&[u8], &[u8])> = vec![
             (&b"accept-version"[..], &b"1.2"[..]),
-            (b"host", b"datafeeds.nationalrail.co.uk"),
+            (b"host", b"datafeeds.here.co.uk"),
             (b"login", b"user"),
             (b"passcode", b"password"),
         ];
@@ -499,5 +511,31 @@ passcode:password\n\n\x00"
         let stomp = frame.to_client_stomp().unwrap();
         let roundtrip = stomp.to_frame().serialize();
         assert_eq!(roundtrip, data);
+    }
+
+    #[test]
+    fn parse_and_serialize_message() {
+        let mut data = b"MESSAGE
+destination:datafeeds.here.co.uk
+message-id:12345
+subscription:some-id
+".to_vec();
+        let body = "this body contains \x00 nulls \n and \r\n newlines \x00 OK?";
+        let rest = format!("content-length:{}\n\n{}\x00", body.len(), body);
+        data.extend_from_slice(rest.as_bytes());
+        let (_, frame) = parse_frame(&data).unwrap();
+        assert_eq!(frame.command, b"MESSAGE");
+        let headers_expect: Vec<(&[u8], &[u8])> = vec![
+            (&b"destination"[..], &b"datafeeds.here.co.uk"[..]),
+            (b"message-id", b"12345"),
+            (b"subscription", b"some-id"),
+            (b"content-length", b"50"),
+        ];
+        assert_eq!(frame.headers, headers_expect);
+        assert_eq!(frame.body, Some(body.as_bytes()));
+        let stomp = frame.to_server_stomp().unwrap();
+        // TODO to_frame for ServerStomp
+        // let roundtrip = stomp.to_frame().serialize();
+        // assert_eq!(roundtrip, data);
     }
 }
