@@ -29,14 +29,15 @@ fn main() {
         tx.unbounded_send(ClientStomp::Send {
             destination: "rusty".into(),
             transaction: None,
-            body: Some(b"Hello there rustaceans!".to_vec())
+            body: Some(b"Hello there rustaceans!".to_vec()),
         });
         println!("Message sent");
         std::thread::sleep_ms(1000);
         tx.unbounded_send(ClientStomp::Unsubscribe { id: "myid".into() });
         println!("Unsubscribe sent");
         std::thread::sleep_ms(1000);
-        tx.unbounded_send(ClientStomp::Disconnect { receipt: None }).unwrap();
+        tx.unbounded_send(ClientStomp::Disconnect { receipt: None })
+            .unwrap();
         println!("Disconnect sent");
         std::thread::sleep_ms(1000);
     });

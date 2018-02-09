@@ -84,15 +84,18 @@ named!(
 // If content-length exists, take that quantity
 // If not, take body until NULL
 named!(
-    pub parse_frame<Frame>,
+    parse_frame<Frame>,
     do_parse!(
-        command: map!(take_until_and_consume!("\n"), strip_cr) >>
-        headers: many0!(header) >> eol >>
-        body: map!(take_until_and_consume!("\x00"), |v| if v.is_empty() {
-            None
-        } else {
-            Some(v)
-        }) >> many0!(complete!(eol)) >> (Frame {command, headers, body,})
+        command: map!(take_until_and_consume!("\n"), strip_cr) >> headers: many0!(header) >> eol
+            >> body: map!(take_until_and_consume!("\x00"), |v| if v.is_empty() {
+                None
+            } else {
+                Some(v)
+            }) >> many0!(complete!(eol)) >> (Frame {
+            command,
+            headers,
+            body,
+        })
     )
 );
 
@@ -119,7 +122,7 @@ fn expect_header<'a>(headers: &'a [(&'a [u8], &'a [u8])], key: &'a str) -> Resul
 }
 
 impl<'a> Frame<'a> {
-    pub fn to_client_stomp(&'a self) -> Result<ClientStomp> {
+    fn to_client_stomp(&'a self) -> Result<ClientStomp> {
         use ClientStomp::*;
         use expect_header as eh;
         use fetch_header as fh;
@@ -168,7 +171,7 @@ impl<'a> Frame<'a> {
         Ok(out)
     }
 
-    pub fn to_server_stomp(&'a self) -> Result<ServerStomp> {
+    fn to_server_stomp(&'a self) -> Result<ServerStomp> {
         use ServerStomp::*;
         use expect_header as eh;
         use fetch_header as fh;
@@ -205,6 +208,7 @@ pub enum ServerStomp {
         version: String,
         session: Option<String>,
         server: Option<String>,
+        // TODO heartbeat is two ints
         heartbeat: Option<String>,
     },
     Message {
@@ -229,17 +233,20 @@ pub enum ClientStomp {
         host: String,
         login: Option<String>,
         passcode: Option<String>,
+        // TODO heartbeat is two ints
         heartbeat: Option<String>,
     },
     Send {
         destination: String,
         transaction: Option<String>,
         body: Option<Vec<u8>>,
+        // TODO: content-length
     },
     Subscribe {
         destination: String,
         id: String,
-        ack: Option<String>
+        // TODO Ack should be enum
+        ack: Option<String>,
     },
     Unsubscribe {
         id: String,
@@ -259,7 +266,7 @@ pub enum ClientStomp {
         transaction: String,
     },
     Abort {
-        transaction: String
+        transaction: String,
     },
     Disconnect {
         receipt: Option<String>,
@@ -271,7 +278,7 @@ fn opt_str_to_bytes<'a>(s: &'a Option<String>) -> Option<&'a [u8]> {
 }
 
 impl ClientStomp {
-    pub fn to_frame<'a>(&'a self) -> Frame<'a> {
+    fn to_frame<'a>(&'a self) -> Frame<'a> {
         use opt_str_to_bytes as b;
         use ClientStomp::*;
         match *self {
@@ -308,15 +315,9 @@ impl ClientStomp {
                 ],
                 None,
             ),
-            Unsubscribe {
-                ref id,
-            } => Frame::new(
-                b"UNSUBSCRIBE",
-                &[
-                    (b"id", Some(id.as_bytes())),
-                ],
-                None,
-            ),
+            Unsubscribe { ref id } => {
+                Frame::new(b"UNSUBSCRIBE", &[(b"id", Some(id.as_bytes()))], None)
+            }
             Send {
                 ref destination,
                 ref transaction,
@@ -325,15 +326,64 @@ impl ClientStomp {
                 b"SEND",
                 &[
                     (b"destination", Some(destination.as_bytes())),
-                    (b"id", b(transaction))
+                    (b"id", b(transaction)),
                 ],
-                body.as_ref().map(|v| v.as_ref())),
-            _ => unimplemented!(),
+                body.as_ref().map(|v| v.as_ref()),
+            ),
+            Ack {
+                ref id,
+                ref transaction,
+            } => Frame::new(
+                b"ACK",
+                &[
+                    (b"id", Some(id.as_bytes())),
+                    (b"transaction", b(transaction)),
+                ],
+                None,
+            ),
+            Nack {
+                ref id,
+                ref transaction,
+            } => Frame::new(
+                b"NACK",
+                &[
+                    (b"id", Some(id.as_bytes())),
+                    (b"transaction", b(transaction)),
+                ],
+                None,
+            ),
+            Begin {
+                ref transaction,
+            } => Frame::new(
+                b"BEGIN",
+                &[
+                    (b"transaction", Some(transaction.as_bytes())),
+                ],
+                None,
+            ),
+            Commit {
+                ref transaction,
+            } => Frame::new(
+                b"COMMIT",
+                &[
+                    (b"transaction", Some(transaction.as_bytes())),
+                ],
+                None,
+            ),
+            Abort {
+                ref transaction,
+            } => Frame::new(
+                b"ABORT",
+                &[
+                    (b"transaction", Some(transaction.as_bytes())),
+                ],
+                None,
+            ),
         }
     }
 }
 
-pub struct StompCodec;
+struct StompCodec;
 
 impl Decoder for StompCodec {
     type Item = ServerStomp;
