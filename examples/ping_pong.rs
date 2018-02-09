@@ -11,7 +11,7 @@ use futures::prelude::*;
 
 fn main() {
     std::thread::spawn(|| {
-        let (fut1, tx1) = tokio_stomp::connect("127.0.0.1:61613").unwrap();
+        let (fut1, tx1) = tokio_stomp::connect("127.0.0.1:61613".into(), None, None).unwrap();
         tx1.unbounded_send(ClientStomp::Subscribe {
             destination: "ping".into(),
             id: "myid".into(),
@@ -42,7 +42,8 @@ fn main() {
         run(|_| spawn(fut1));
     });
 
-    let (fut2, tx2) = tokio_stomp::connect("127.0.0.1:61613").unwrap();
+    let (fut2, tx2) = tokio_stomp::connect("127.0.0.1:61613".into(), None, None).unwrap();
+
     tx2.unbounded_send(ClientStomp::Subscribe {
         destination: "pong".into(),
         id: "myid".into(),

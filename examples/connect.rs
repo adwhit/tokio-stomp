@@ -10,7 +10,7 @@ use futures::future::ok;
 use futures::prelude::*;
 
 fn main() {
-    let (fut, tx) = tokio_stomp::connect("127.0.0.1:61613").unwrap();
+    let (fut, tx) = tokio_stomp::connect("127.0.0.1:61613".into(), None, None).unwrap();
     std::thread::spawn(move || {
         std::thread::sleep(Duration::from_secs(1));
         tx.unbounded_send(ClientStomp::Subscribe {

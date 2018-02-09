@@ -17,6 +17,7 @@ use futures::sync::mpsc;
 use futures::future::{err as ferr, ok as fok};
 use tokio::net::TcpStream;
 use tokio::executor::current_thread::spawn;
+use std::net::ToSocketAddrs;
 
 type Result<T> = std::result::Result<T, failure::Error>;
 type Transport = Framed<TcpStream, StompCodec>;
@@ -86,8 +87,9 @@ named!(
 fn get_content_length(headers: &[(&[u8], &[u8])]) -> Option<u32> {
     for h in headers {
         if h.0 == b"content-length" {
-            return std::str::from_utf8(h.1).ok()
-                .and_then(|v| v.parse::<u32>().ok())
+            return std::str::from_utf8(h.1)
+                .ok()
+                .and_then(|v| v.parse::<u32>().ok());
         }
     }
     None
@@ -104,13 +106,16 @@ fn is_empty_slice(s: &[u8]) -> Option<&[u8]> {
 named!(
     parse_frame<Frame>,
     do_parse!(
-        command: map!(take_until_and_consume!("\n"), strip_cr) >>
-        headers: many0!(header) >> eol >>
-        body: switch!(value!(get_content_length(&headers)),
+        command: map!(take_until_and_consume!("\n"), strip_cr) >> headers: many0!(header) >> eol
+            >> body:
+                switch!(value!(get_content_length(&headers)),
             Some(v) => map!(take!(v), Some) |
             None => map!(take_until!("\x00"), is_empty_slice)
-        ) >> tag!("\x00") >> many0!(complete!(eol)) >>
-        (Frame {command, headers, body})
+        ) >> tag!("\x00") >> many0!(complete!(eol)) >> (Frame {
+            command,
+            headers,
+            body,
+        })
     )
 );
 
@@ -372,31 +377,19 @@ impl ClientStomp {
                 ],
                 None,
             ),
-            Begin {
-                ref transaction,
-            } => Frame::new(
+            Begin { ref transaction } => Frame::new(
                 b"BEGIN",
-                &[
-                    (b"transaction", Some(transaction.as_bytes())),
-                ],
+                &[(b"transaction", Some(transaction.as_bytes()))],
                 None,
             ),
-            Commit {
-                ref transaction,
-            } => Frame::new(
+            Commit { ref transaction } => Frame::new(
                 b"COMMIT",
-                &[
-                    (b"transaction", Some(transaction.as_bytes())),
-                ],
+                &[(b"transaction", Some(transaction.as_bytes()))],
                 None,
             ),
-            Abort {
-                ref transaction,
-            } => Frame::new(
+            Abort { ref transaction } => Frame::new(
                 b"ABORT",
-                &[
-                    (b"transaction", Some(transaction.as_bytes())),
-                ],
+                &[(b"transaction", Some(transaction.as_bytes()))],
                 None,
             ),
         }
@@ -434,14 +427,18 @@ impl Encoder for StompCodec {
     }
 }
 
-pub fn connect(address: &str) -> Result<(StompStream, mpsc::UnboundedSender<ClientStomp>)> {
+pub fn connect(
+    address: String,
+    login: Option<String>,
+    passcode: Option<String>,
+) -> Result<(StompStream, mpsc::UnboundedSender<ClientStomp>)> {
     let (tx, rx) = mpsc::unbounded();
-    let addr = address.parse()?;
+    let addr = address.as_str().to_socket_addrs().unwrap().next().unwrap();
     let inner = TcpStream::connect(&addr)
         .map_err(|e| e.into())
         .and_then(|tcp| {
             let transport = tcp.framed(StompCodec);
-            handshake(transport)
+            handshake(transport, address, login, passcode)
         })
         .and_then(|tcp| {
             let (sink, stream) = tcp.split();
@@ -473,16 +470,21 @@ impl Stream for StompStream {
     }
 }
 
-fn handshake(transport: Transport) -> impl Future<Item = Transport, Error = failure::Error> {
-    let msg = ClientStomp::Connect {
+fn handshake(
+    transport: Transport,
+    host: String,
+    login: Option<String>,
+    passcode: Option<String>,
+) -> impl Future<Item = Transport, Error = failure::Error> {
+    let connect = ClientStomp::Connect {
         accept_version: "1.1,1.2".into(),
-        host: "0.0.0.0".into(),
-        login: None,
-        passcode: None,
+        host: host,
+        login: login,
+        passcode: passcode,
         heartbeat: None,
     };
     transport
-        .send(msg)
+        .send(connect)
         .and_then(|transport| transport.into_future().map_err(|(e, _)| e.into()))
         .and_then(|(msg, stream)| {
             println!("{:?}", msg);
@@ -527,7 +529,8 @@ passcode:password\n\n\x00"
 destination:datafeeds.here.co.uk
 message-id:12345
 subscription:some-id
-".to_vec();
+"
+            .to_vec();
         let body = "this body contains \x00 nulls \n and \r\n newlines \x00 OK?";
         let rest = format!("content-length:{}\n\n{}\x00", body.len(), body);
         data.extend_from_slice(rest.as_bytes());
