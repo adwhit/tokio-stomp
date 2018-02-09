@@ -148,50 +148,87 @@ impl<'a> Frame<'a> {
         use expect_header as eh;
         use fetch_header as fh;
         let h = &self.headers;
+        let expect_keys: &[&[u8]];
         let content = match self.command {
-            b"STOMP" | b"CONNECT" => Connect {
-                accept_version: eh(h, "accept-version")?,
-                host: eh(h, "host")?,
-                login: fh(h, "login"),
-                passcode: fh(h, "passcode"),
-                heartbeat: fh(h, "heart-beat"),
+            b"STOMP" | b"CONNECT" => {
+                expect_keys = &[b"accept-version", b"host", b"login", b"passcode", b"heart-beat"];
+                Connect {
+                    accept_version: eh(h, "accept-version")?,
+                    host: eh(h, "host")?,
+                    login: fh(h, "login"),
+                    passcode: fh(h, "passcode"),
+                    heartbeat: fh(h, "heart-beat"),
+                }
             },
-            b"DISCONNECT" => Disconnect {
-                receipt: fh(h, "receipt"),
+            b"DISCONNECT" => {
+                expect_keys = &[b"receipt"];
+                Disconnect {
+                    receipt: fh(h, "receipt"),
+                }
             },
-            b"SEND" => Send {
-                destination: eh(h, "destination")?,
-                transaction: fh(h, "transaction"),
-                body: self.body.map(|v| v.to_vec()),
+            b"SEND" => {
+                expect_keys = &[b"destination", b"transaction"];
+                Send {
+                    destination: eh(h, "destination")?,
+                    transaction: fh(h, "transaction"),
+                    body: self.body.map(|v| v.to_vec()),
+                }
             },
-            b"SUBSCRIBE" => Subscribe {
-                destination: eh(h, "destination")?,
-                id: eh(h, "id")?,
-                ack: fh(h, "ack"),
+            b"SUBSCRIBE" => {
+                expect_keys = &[b"destination", b"id", b"ack"];
+                Subscribe {
+                    destination: eh(h, "destination")?,
+                    id: eh(h, "id")?,
+                    ack: fh(h, "ack"),
+                }
             },
-            b"UNSUBSCRIBE" => Unsubscribe { id: eh(h, "id")? },
-            b"ACK" => Ack {
-                id: eh(h, "id")?,
-                transaction: fh(h, "transaction"),
+            b"UNSUBSCRIBE" => {
+                expect_keys = &[b"id"];
+                Unsubscribe { id: eh(h, "id")? }
             },
-            b"NACK" => Nack {
-                id: eh(h, "id")?,
-                transaction: fh(h, "transaction"),
+            b"ACK" => {
+                expect_keys = &[b"id", b"transaction"];
+                Ack {
+                    id: eh(h, "id")?,
+                    transaction: fh(h, "transaction"),
+                }
             },
-            b"BEGIN" => Begin {
-                transaction: eh(h, "transaction")?,
+            b"NACK" => {
+                expect_keys = &[b"id", b"transaction"];
+                Nack {
+                    id: eh(h, "id")?,
+                    transaction: fh(h, "transaction"),
+                }
             },
-            b"COMMIT" => Commit {
-                transaction: eh(h, "transaction")?,
+            b"BEGIN" => {
+                expect_keys = &[b"transaction"];
+                Begin {
+                    transaction: eh(h, "transaction")?,
+                }
             },
-            b"ABORT" => Abort {
-                transaction: eh(h, "transaction")?,
+            b"COMMIT" => {
+                expect_keys = &[b"transaction"];
+                Commit {
+                    transaction: eh(h, "transaction")?,
+                }
+            },
+            b"ABORT" => {
+                expect_keys = &[b"transaction"];
+                Abort {
+                    transaction: eh(h, "transaction")?,
+                }
             },
             other => bail!("Frame not recognized: {:?}", String::from_utf8_lossy(other)),
         };
+        let extra_headers = h.iter().filter_map(
+            |&(k, v)| if !expect_keys.contains(&k) {
+                Some((k.to_vec(), v.to_vec()))
+            } else {
+                None
+            }).collect();
         Ok(Message {
             content,
-            extra_headers: vec![] // TODO
+            extra_headers
         })
     }
 
@@ -200,7 +237,7 @@ impl<'a> Frame<'a> {
         use expect_header as eh;
         use fetch_header as fh;
         let h = &self.headers;
-        let mut expect_keys: &[&[u8]] = &[];
+        let expect_keys: &[&[u8]];
         let content = match self.command {
             b"CONNECTED" => {
                 expect_keys = &[b"version", b"session", b"server", b"heart-beat"];
@@ -465,7 +502,6 @@ impl Decoder for StompCodec {
     type Error = failure::Error;
 
     fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>> {
-        //println!("{:?}", String::from_utf8_lossy(&src));
         let (item, offset) = match parse_frame(&src) {
             Ok((remain, frame)) => {
                 (Message::<ServerMsg>::from_frame(frame),
@@ -557,7 +593,6 @@ fn handshake(
         .send(connect)
         .and_then(|transport| transport.into_future().map_err(|(e, _)| e.into()))
         .and_then(|(msg, stream)| {
-            //println!("{:?}", msg);
             if let Some(ServerMsg::Connected { .. }) = msg.map(|m| m.content) {
                 fok(stream)
             } else {
