@@ -106,6 +106,7 @@ fn is_empty_slice(s: &[u8]) -> Option<&[u8]> {
 named!(
     parse_frame<Frame>,
     do_parse!(
+        many0!(eol) >>
         command: map!(take_until_and_consume!("\n"), strip_cr) >> headers: many0!(header) >> eol
             >> body:
                 switch!(value!(get_content_length(&headers)),
