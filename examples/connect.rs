@@ -1,6 +1,3 @@
-#![allow(dead_code)]
-#![feature(conservative_impl_trait)]
-
 #[macro_use]
 extern crate failure;
 extern crate futures;
@@ -42,7 +39,11 @@ fn main() {
         std::thread::sleep(Duration::from_secs(1));
     });
     let fut = fut.for_each(|item| {
-        println!("{:?}", item);
+        if let ServerStomp::Message { body, .. } = item {
+            println!("Message received: {:?}", String::from_utf8_lossy(&body.unwrap()));
+        } else {
+            println!("{:?}", item);
+        }
         fok(())
     }).map_err(|e| eprintln!("{}", e));
     run(|_| spawn(fut));

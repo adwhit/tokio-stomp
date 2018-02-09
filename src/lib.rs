@@ -63,7 +63,7 @@ impl<'a> Frame<'a> {
             buffer.push(b'\n');
         });
         if let Some(body) = self.body {
-            buffer.extend(&body_content_length(&body));
+            buffer.extend(&get_content_length_header(&body));
             buffer.push(b'\n');
             buffer.extend(body);
         } else {
@@ -294,7 +294,7 @@ fn opt_str_to_bytes<'a>(s: &'a Option<String>) -> Option<&'a [u8]> {
     s.as_ref().map(|v| v.as_bytes())
 }
 
-fn body_content_length(body: &[u8]) -> Vec<u8> {
+fn get_content_length_header(body: &[u8]) -> Vec<u8> {
     format!("content-length:{}\n", body.len()).into()
 }
 
