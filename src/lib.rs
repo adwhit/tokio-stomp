@@ -240,6 +240,7 @@ pub enum ServerStomp {
 
 #[derive(Debug, Clone)]
 pub enum ClientStomp {
+    // TODO remove Connect from ClientStomp
     Connect {
         accept_version: String,
         host: String,
