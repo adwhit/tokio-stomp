@@ -200,31 +200,50 @@ impl<'a> Frame<'a> {
         use expect_header as eh;
         use fetch_header as fh;
         let h = &self.headers;
+        let mut expect_keys: &[&[u8]] = &[];
         let content = match self.command {
-            b"CONNECTED" => Connected {
-                version: eh(h, "version")?,
-                session: fh(h, "session"),
-                server: fh(h, "server"),
-                heartbeat: fh(h, "heart-beat"),
+            b"CONNECTED" => {
+                expect_keys = &[b"version", b"session", b"server", b"heart-beat"];
+                Connected {
+                    version: eh(h, "version")?,
+                    session: fh(h, "session"),
+                    server: fh(h, "server"),
+                    heartbeat: fh(h, "heart-beat"),
+                }
             },
-            b"MESSAGE" => Msg {
-                destination: eh(h, "destination")?,
-                message_id: eh(h, "message-id")?,
-                subscription: eh(h, "subscription")?,
-                body: self.body.map(|v| v.to_vec()),
+            b"MESSAGE" => {
+                expect_keys = &[b"destination", b"message-id", b"subscription"];
+                Msg {
+                    destination: eh(h, "destination")?,
+                    message_id: eh(h, "message-id")?,
+                    subscription: eh(h, "subscription")?,
+                    body: self.body.map(|v| v.to_vec()),
+                }
             },
-            b"RECEIPT" => Receipt {
-                receipt_id: eh(h, "receipt-id")?,
+            b"RECEIPT" => {
+                expect_keys = &[b"receipt-id"];
+                Receipt {
+                    receipt_id: eh(h, "receipt-id")?,
+                }
             },
-            b"ERROR" => Error {
-                message: fh(h, "message-id"),
-                body: self.body.map(|v| v.to_vec()),
+            b"ERROR" => {
+                expect_keys = &[b"message"];
+                Error {
+                    message: fh(h, "message"),
+                    body: self.body.map(|v| v.to_vec()),
+                }
             },
             other => bail!("Frame not recognized: {:?}", String::from_utf8_lossy(other)),
         };
+        let extra_headers = h.iter().filter_map(
+            |&(k, v)| if !expect_keys.contains(&k) {
+                Some((k.to_vec(), v.to_vec()))
+            } else {
+                None
+            }).collect();
         Ok(Message {
             content,
-            extra_headers: vec![] // TODO
+            extra_headers
         })
     }
 }
@@ -259,6 +278,7 @@ pub struct Message<T> {
     pub extra_headers: Vec<(Vec<u8>, Vec<u8>)>,
 }
 
+// TODO tidy this lot up with traits?
 impl Message<ServerMsg> {
     // fn to_frame<'a>(&'a self) -> Frame<'a> {
     //     unimplemented!()
@@ -445,7 +465,7 @@ impl Decoder for StompCodec {
     type Error = failure::Error;
 
     fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>> {
-        println!("{:?}", String::from_utf8_lossy(&src));
+        //println!("{:?}", String::from_utf8_lossy(&src));
         let (item, offset) = match parse_frame(&src) {
             Ok((remain, frame)) => {
                 (Message::<ServerMsg>::from_frame(frame),
@@ -537,7 +557,7 @@ fn handshake(
         .send(connect)
         .and_then(|transport| transport.into_future().map_err(|(e, _)| e.into()))
         .and_then(|(msg, stream)| {
-            println!("{:?}", msg);
+            //println!("{:?}", msg);
             if let Some(ServerMsg::Connected { .. }) = msg.map(|m| m.content) {
                 fok(stream)
             } else {
