@@ -4,7 +4,6 @@ extern crate bytes;
 #[macro_use]
 extern crate failure;
 extern crate futures;
-extern crate hex;
 #[macro_use]
 extern crate nom;
 extern crate tokio;
@@ -23,7 +22,7 @@ type Result<T> = std::result::Result<T, failure::Error>;
 type Transport = Framed<TcpStream, StompCodec>;
 
 #[derive(Debug)]
-pub struct Frame<'a> {
+struct Frame<'a> {
     command: &'a [u8],
     // TODO use ArrayVec to keep headers on the stack
     headers: Vec<(&'a [u8], &'a [u8])>,
@@ -542,7 +541,7 @@ subscription:some-id
         ];
         assert_eq!(frame.headers, headers_expect);
         assert_eq!(frame.body, Some(body.as_bytes()));
-        let stomp = frame.to_server_stomp().unwrap();
+        frame.to_server_stomp().unwrap();
         // TODO to_frame for ServerStomp
         // let roundtrip = stomp.to_frame().serialize();
         // assert_eq!(roundtrip, data);

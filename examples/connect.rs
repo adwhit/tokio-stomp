@@ -1,15 +1,12 @@
-#[macro_use]
-extern crate failure;
 extern crate futures;
 extern crate tokio;
-extern crate tokio_io;
 extern crate tokio_stomp;
 
 use std::time::Duration;
 
 use tokio_stomp::*;
 use tokio::executor::current_thread::{run, spawn};
-use futures::future::{err as ferr, ok as fok};
+use futures::future::ok;
 use futures::prelude::*;
 
 fn main() {
@@ -30,7 +27,8 @@ fn main() {
         }).unwrap();
         println!("Message sent");
         std::thread::sleep(Duration::from_secs(1));
-        tx.unbounded_send(ClientStomp::Unsubscribe { id: "myid".into() }).unwrap();
+        tx.unbounded_send(ClientStomp::Unsubscribe { id: "myid".into() })
+            .unwrap();
         println!("Unsubscribe sent");
         std::thread::sleep(Duration::from_secs(1));
         tx.unbounded_send(ClientStomp::Disconnect { receipt: None })
@@ -40,11 +38,14 @@ fn main() {
     });
     let fut = fut.for_each(|item| {
         if let ServerStomp::Message { body, .. } = item {
-            println!("Message received: {:?}", String::from_utf8_lossy(&body.unwrap()));
+            println!(
+                "Message received: {:?}",
+                String::from_utf8_lossy(&body.unwrap())
+            );
         } else {
             println!("{:?}", item);
         }
-        fok(())
+        ok(())
     }).map_err(|e| eprintln!("{}", e));
     run(|_| spawn(fut));
 }
