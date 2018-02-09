@@ -12,13 +12,13 @@ use futures::prelude::*;
 fn main() {
     std::thread::spawn(|| {
         let (fut1, tx1) = tokio_stomp::connect("127.0.0.1:61613".into(), None, None).unwrap();
-        tx1.unbounded_send(ClientStomp::Subscribe {
+        tx1.unbounded_send(ClientMsg::Subscribe {
             destination: "ping".into(),
             id: "myid".into(),
             ack: None,
         }).unwrap();
 
-        tx1.unbounded_send(ClientStomp::Send {
+        tx1.unbounded_send(ClientMsg::Send {
             destination: "pong".into(),
             transaction: None,
             body: Some(b"PONG!".to_vec()),
@@ -27,10 +27,10 @@ fn main() {
         std::thread::sleep(Duration::from_secs(1));
 
         let fut1 = fut1.for_each(move |item| {
-            if let ServerStomp::Message { body, .. } = item {
+            if let ServerMsg::Message { body, .. } = item.content {
                 println!("{}", String::from_utf8_lossy(&body.unwrap()));
             }
-            tx1.unbounded_send(ClientStomp::Send {
+            tx1.unbounded_send(ClientMsg::Send {
                 destination: "pong".into(),
                 transaction: None,
                 body: Some(b"PONG!".to_vec()),
@@ -44,17 +44,17 @@ fn main() {
 
     let (fut2, tx2) = tokio_stomp::connect("127.0.0.1:61613".into(), None, None).unwrap();
 
-    tx2.unbounded_send(ClientStomp::Subscribe {
+    tx2.unbounded_send(ClientMsg::Subscribe {
         destination: "pong".into(),
         id: "myid".into(),
         ack: None,
     }).unwrap();
 
     let fut2 = fut2.for_each(move |item| {
-        if let ServerStomp::Message { body, .. } = item {
+        if let ServerMsg::Message { body, .. } = item.content {
             println!("{}", String::from_utf8_lossy(&body.unwrap()));
         }
-        tx2.unbounded_send(ClientStomp::Send {
+        tx2.unbounded_send(ClientMsg::Send {
             destination: "ping".into(),
             transaction: None,
             body: Some(b"PING!".to_vec()),

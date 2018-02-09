@@ -13,31 +13,31 @@ fn main() {
     let (fut, tx) = tokio_stomp::connect("127.0.0.1:61613".into(), None, None).unwrap();
     std::thread::spawn(move || {
         std::thread::sleep(Duration::from_secs(1));
-        tx.unbounded_send(ClientStomp::Subscribe {
+        tx.unbounded_send(ClientMsg::Subscribe {
             destination: "rusty".into(),
             id: "myid".into(),
             ack: None,
         }).unwrap();
         println!("Subscribe sent");
         std::thread::sleep(Duration::from_secs(1));
-        tx.unbounded_send(ClientStomp::Send {
+        tx.unbounded_send(ClientMsg::Send {
             destination: "rusty".into(),
             transaction: None,
             body: Some(b"Hello there rustaceans!".to_vec()),
         }).unwrap();
         println!("Message sent");
         std::thread::sleep(Duration::from_secs(1));
-        tx.unbounded_send(ClientStomp::Unsubscribe { id: "myid".into() })
+        tx.unbounded_send(ClientMsg::Unsubscribe { id: "myid".into() })
             .unwrap();
         println!("Unsubscribe sent");
         std::thread::sleep(Duration::from_secs(1));
-        tx.unbounded_send(ClientStomp::Disconnect { receipt: None })
+        tx.unbounded_send(ClientMsg::Disconnect { receipt: None })
             .unwrap();
         println!("Disconnect sent");
         std::thread::sleep(Duration::from_secs(1));
     });
     let fut = fut.for_each(|item| {
-        if let ServerStomp::Message { body, .. } = item {
+        if let ServerMsg::Message { body, .. } = item.content {
             println!(
                 "Message received: {:?}",
                 String::from_utf8_lossy(&body.unwrap())

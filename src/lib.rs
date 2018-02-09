@@ -143,12 +143,12 @@ fn expect_header<'a>(headers: &'a [(&'a [u8], &'a [u8])], key: &'a str) -> Resul
 }
 
 impl<'a> Frame<'a> {
-    fn to_client_stomp(&'a self) -> Result<ClientStomp> {
-        use ClientStomp::*;
+    fn to_client_stomp(&'a self) -> Result<Message<ClientMsg>> {
+        use ClientMsg::*;
         use expect_header as eh;
         use fetch_header as fh;
         let h = &self.headers;
-        let out = match self.command {
+        let content = match self.command {
             b"STOMP" | b"CONNECT" => Connect {
                 accept_version: eh(h, "accept-version")?,
                 host: eh(h, "host")?,
@@ -189,22 +189,25 @@ impl<'a> Frame<'a> {
             },
             other => bail!("Frame not recognized: {:?}", String::from_utf8_lossy(other)),
         };
-        Ok(out)
+        Ok(Message {
+            content,
+            extra_headers: vec![] // TODO
+        })
     }
 
-    fn to_server_stomp(&'a self) -> Result<ServerStomp> {
-        use ServerStomp::*;
+    fn to_server_stomp(&'a self) -> Result<Message<ServerMsg>> {
+        use ServerMsg::{Connected, Receipt, Error, Message as Msg};
         use expect_header as eh;
         use fetch_header as fh;
         let h = &self.headers;
-        let out = match self.command {
+        let content = match self.command {
             b"CONNECTED" => Connected {
                 version: eh(h, "version")?,
                 session: fh(h, "session"),
                 server: fh(h, "server"),
                 heartbeat: fh(h, "heart-beat"),
             },
-            b"MESSAGE" => Message {
+            b"MESSAGE" => Msg {
                 destination: eh(h, "destination")?,
                 message_id: eh(h, "message-id")?,
                 subscription: eh(h, "subscription")?,
@@ -219,12 +222,15 @@ impl<'a> Frame<'a> {
             },
             other => bail!("Frame not recognized: {:?}", String::from_utf8_lossy(other)),
         };
-        Ok(out)
+        Ok(Message {
+            content,
+            extra_headers: vec![] // TODO
+        })
     }
 }
 
 #[derive(Debug, Clone)]
-pub enum ServerStomp {
+pub enum ServerMsg {
     Connected {
         version: String,
         session: Option<String>,
@@ -247,9 +253,44 @@ pub enum ServerStomp {
     },
 }
 
+#[derive(Debug)]
+pub struct Message<T> {
+    pub content: T,
+    pub extra_headers: Vec<(Vec<u8>, Vec<u8>)>,
+}
+
+impl Message<ServerMsg> {
+    // fn to_frame<'a>(&'a self) -> Frame<'a> {
+    //     unimplemented!()
+    // }
+
+    fn from_frame<'a>(frame: Frame<'a>) -> Result<Message<ServerMsg>> {
+        frame.to_server_stomp()
+    }
+}
+
+impl Message<ClientMsg> {
+    fn to_frame<'a>(&'a self) -> Frame<'a> {
+        self.content.to_frame()
+    }
+
+    fn from_frame<'a>(frame: Frame<'a>) -> Result<Message<ClientMsg>> {
+        frame.to_client_stomp()
+    }
+}
+
+impl From<ClientMsg> for Message<ClientMsg> {
+    fn from(content: ClientMsg) -> Message<ClientMsg> {
+        Message {
+            content,
+            extra_headers: vec![]
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
-pub enum ClientStomp {
-    // TODO remove Connect from ClientStomp
+pub enum ClientMsg {
+    // TODO remove Connect from ClientMsg
     Connect {
         accept_version: String,
         host: String,
@@ -303,10 +344,10 @@ fn get_content_length_header(body: &[u8]) -> Vec<u8> {
     format!("content-length:{}\n", body.len()).into()
 }
 
-impl ClientStomp {
+impl ClientMsg {
     fn to_frame<'a>(&'a self) -> Frame<'a> {
         use opt_str_to_bytes as b;
-        use ClientStomp::*;
+        use ClientMsg::*;
         match *self {
             Connect {
                 ref accept_version,
@@ -400,24 +441,26 @@ impl ClientStomp {
 struct StompCodec;
 
 impl Decoder for StompCodec {
-    type Item = ServerStomp;
+    type Item = Message<ServerMsg>;
     type Error = failure::Error;
 
     fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>> {
         println!("{:?}", String::from_utf8_lossy(&src));
-        let offset = match parse_frame(&src) {
-            Ok((remain, _)) => remain.as_ptr() as usize - src.as_ptr() as usize,
+        let (item, offset) = match parse_frame(&src) {
+            Ok((remain, frame)) => {
+                (Message::<ServerMsg>::from_frame(frame),
+                remain.as_ptr() as usize - src.as_ptr() as usize)
+            }
             Err(nom::Err::Incomplete(_)) => return Ok(None),
             Err(e) => bail!("Parse failed: {:?}", e),
         };
-        let bytes = src.split_to(offset);
-        let item = parse_frame(&bytes).unwrap().1.to_server_stomp();
+        src.split_to(offset);
         item.map(|v| Some(v))
     }
 }
 
 impl Encoder for StompCodec {
-    type Item = ClientStomp;
+    type Item = Message<ClientMsg>;
     type Error = failure::Error;
 
     fn encode(&mut self, item: Self::Item, dst: &mut BytesMut) -> Result<()> {
@@ -428,12 +471,12 @@ impl Encoder for StompCodec {
     }
 }
 
-pub fn connect(
+pub fn connect<T: Into<Message<ClientMsg>> + 'static>(
     address: String,
     login: Option<String>,
     passcode: Option<String>,
-) -> Result<(StompStream, mpsc::UnboundedSender<ClientStomp>)> {
-    let (tx, rx) = mpsc::unbounded();
+) -> Result<(StompStream, mpsc::UnboundedSender<T>)> {
+    let (tx, rx) = mpsc::unbounded::<T>();
     let addr = address.as_str().to_socket_addrs().unwrap().next().unwrap();
     let inner = TcpStream::connect(&addr)
         .map_err(|e| e.into())
@@ -443,7 +486,9 @@ pub fn connect(
         })
         .and_then(|tcp| {
             let (sink, stream) = tcp.split();
-            let fsink = sink.send_all(rx.map_err(|()| format_err!("Channel closed")))
+            let fsink = sink.send_all(
+                rx.map(|m| m.into())
+                    .map_err(|()| format_err!("Channel closed")))
                 .map(|_| println!("Sink closed"))
                 .map_err(|e| eprintln!("{}", e));
             spawn(fsink);
@@ -459,11 +504,11 @@ pub fn connect(
 }
 
 pub struct StompStream {
-    inner: Box<Stream<Item = ServerStomp, Error = failure::Error>>,
+    inner: Box<Stream<Item = Message<ServerMsg>, Error = failure::Error>>,
 }
 
 impl Stream for StompStream {
-    type Item = ServerStomp;
+    type Item = Message<ServerMsg>;
     type Error = failure::Error;
 
     fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
@@ -477,19 +522,23 @@ fn handshake(
     login: Option<String>,
     passcode: Option<String>,
 ) -> impl Future<Item = Transport, Error = failure::Error> {
-    let connect = ClientStomp::Connect {
-        accept_version: "1.1,1.2".into(),
-        host: host,
-        login: login,
-        passcode: passcode,
-        heartbeat: None,
+    let connect = Message {
+        content: ClientMsg::Connect {
+            accept_version: "1.1,1.2".into(),
+            host: host,
+            login: login,
+            passcode: passcode,
+            heartbeat: None,
+        },
+        extra_headers: vec![]
     };
+
     transport
         .send(connect)
         .and_then(|transport| transport.into_future().map_err(|(e, _)| e.into()))
         .and_then(|(msg, stream)| {
             println!("{:?}", msg);
-            if let Some(ServerStomp::Connected { .. }) = msg {
+            if let Some(ServerMsg::Connected { .. }) = msg.map(|m| m.content) {
                 fok(stream)
             } else {
                 ferr(format_err!("unexpected reply"))
@@ -526,7 +575,7 @@ passcode:password\n\n\x00"
 
     #[test]
     fn parse_and_serialize_message() {
-        let mut data = b"MESSAGE
+        let mut data = b"\nMESSAGE
 destination:datafeeds.here.co.uk
 message-id:12345
 subscription:some-id
@@ -546,7 +595,7 @@ subscription:some-id
         assert_eq!(frame.headers, headers_expect);
         assert_eq!(frame.body, Some(body.as_bytes()));
         frame.to_server_stomp().unwrap();
-        // TODO to_frame for ServerStomp
+        // TODO to_frame for ServerMsg
         // let roundtrip = stomp.to_frame().serialize();
         // assert_eq!(roundtrip, data);
     }
