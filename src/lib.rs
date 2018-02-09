@@ -9,15 +9,17 @@ extern crate nom;
 extern crate tokio;
 extern crate tokio_io;
 
-use tokio_io::codec::{Decoder, Encoder, Framed};
-use tokio_io::AsyncRead;
 use bytes::{BufMut, BytesMut};
 use futures::prelude::*;
 use futures::sync::mpsc;
 use futures::future::{err as ferr, ok as fok};
 use tokio::net::TcpStream;
 use tokio::executor::current_thread::spawn;
+use tokio_io::codec::{Decoder, Encoder, Framed};
+use tokio_io::AsyncRead;
+
 use std::net::ToSocketAddrs;
+use std::borrow::Cow;
 
 type Result<T> = std::result::Result<T, failure::Error>;
 type Transport = Framed<TcpStream, StompCodec>;
@@ -26,19 +28,20 @@ type Transport = Framed<TcpStream, StompCodec>;
 struct Frame<'a> {
     command: &'a [u8],
     // TODO use ArrayVec to keep headers on the stack
-    headers: Vec<(&'a [u8], &'a [u8])>,
+    headers: Vec<(&'a [u8], Cow<'a, [u8]>)>,
     body: Option<&'a [u8]>,
 }
 
 impl<'a> Frame<'a> {
     fn new(
         command: &'a [u8],
-        headers: &[(&'a [u8], Option<&'a [u8]>)],
+        headers: &[(&'a [u8], Option<Cow<'a, [u8]>>)],
         body: Option<&'a [u8]>,
     ) -> Frame<'a> {
         let headers = headers
             .iter()
-            .filter_map(|&(k, v)| v.map(|i| (k, i)))
+            // filter out headers with None value
+            .filter_map(|&(k, ref v)| v.as_ref().map(|i| (k, (&*i).clone())))
             .collect();
         Frame {
             command,
@@ -56,10 +59,10 @@ impl<'a> Frame<'a> {
         buffer.extend(self.command);
         buffer.push(b'\n');
         // TODO escaping. use bytes crate?
-        self.headers.iter().for_each(|&(k, v)| {
+        self.headers.iter().for_each(|&(k, ref v)| {
             buffer.extend(k);
             buffer.push(b':');
-            buffer.extend(v);
+            buffer.extend(&**v);
             buffer.push(b'\n');
         });
         if let Some(body) = self.body {
@@ -77,17 +80,17 @@ impl<'a> Frame<'a> {
 named!(eol, preceded!(opt!(tag!("\r")), tag!("\n")));
 
 named!(
-    header<(&[u8], &[u8])>,
+    parse_header<(&[u8], Cow<[u8]>)>,
     pair!(
         take_until_either!(":\n"),
-        preceded!(tag!(":"), map!(take_until_and_consume1!("\n"), strip_cr))
+        preceded!(tag!(":"), map!(take_until_and_consume1!("\n"), |bytes| Cow::Borrowed(strip_cr(bytes))))
     )
 );
 
-fn get_content_length(headers: &[(&[u8], &[u8])]) -> Option<u32> {
+fn get_content_length(headers: &[(&[u8], Cow<[u8]>)]) -> Option<u32> {
     for h in headers {
         if h.0 == b"content-length" {
-            return std::str::from_utf8(h.1)
+            return std::str::from_utf8(&*h.1)
                 .ok()
                 .and_then(|v| v.parse::<u32>().ok());
         }
@@ -107,9 +110,9 @@ named!(
     parse_frame<Frame>,
     do_parse!(
         many0!(eol) >>
-        command: map!(take_until_and_consume!("\n"), strip_cr) >> headers: many0!(header) >> eol
+        command: map!(take_until_and_consume!("\n"), strip_cr) >> headers: many0!(parse_header) >> eol
             >> body:
-                switch!(value!(get_content_length(&headers)),
+                switch!(value!(get_content_length(&*headers)),
             Some(v) => map!(take!(v), Some) |
             None => map!(take_until!("\x00"), is_empty_slice)
         ) >> tag!("\x00") >> many0!(complete!(eol)) >> (Frame {
@@ -128,22 +131,22 @@ fn strip_cr(buf: &[u8]) -> &[u8] {
     }
 }
 
-fn fetch_header<'a>(headers: &'a [(&'a [u8], &'a [u8])], key: &'a str) -> Option<String> {
+fn fetch_header<'a>(headers: &'a [(&'a [u8], Cow<'a, [u8]>)], key: &'a str) -> Option<String> {
     let kk = key.as_bytes();
-    for &(k, v) in headers {
-        if k == kk {
+    for &(k, ref v) in headers {
+        if &*k == kk {
             return String::from_utf8(v.to_vec()).ok();
         }
     }
     None
 }
 
-fn expect_header<'a>(headers: &'a [(&'a [u8], &'a [u8])], key: &'a str) -> Result<String> {
+fn expect_header<'a>(headers: &'a [(&'a [u8], Cow<'a,[u8]>)], key: &'a str) -> Result<String> {
     fetch_header(headers, key).ok_or_else(|| format_err!("Expected header {} missing", key))
 }
 
 impl<'a> Frame<'a> {
-    fn to_client_stomp(&'a self) -> Result<Message<ClientMsg>> {
+    fn to_client_msg(&'a self) -> Result<Message<ClientMsg>> {
         use ClientMsg::*;
         use expect_header as eh;
         use fetch_header as fh;
@@ -152,12 +155,17 @@ impl<'a> Frame<'a> {
         let content = match self.command {
             b"STOMP" | b"CONNECT" => {
                 expect_keys = &[b"accept-version", b"host", b"login", b"passcode", b"heart-beat"];
+                let heartbeat = if let Some(hb) = fh(h, "heart-beat") {
+                    Some(parse_heartbeat(&hb)?)
+                } else {
+                    None
+                };
                 Connect {
                     accept_version: eh(h, "accept-version")?,
                     host: eh(h, "host")?,
                     login: fh(h, "login"),
                     passcode: fh(h, "passcode"),
-                    heartbeat: fh(h, "heart-beat"),
+                    heartbeat
                 }
             },
             b"DISCONNECT" => {
@@ -221,8 +229,8 @@ impl<'a> Frame<'a> {
             other => bail!("Frame not recognized: {:?}", String::from_utf8_lossy(other)),
         };
         let extra_headers = h.iter().filter_map(
-            |&(k, v)| if !expect_keys.contains(&k) {
-                Some((k.to_vec(), v.to_vec()))
+            |&(k, ref v)| if !expect_keys.contains(&k) {
+                Some((k.to_vec(), (&*v).to_vec()))
             } else {
                 None
             }).collect();
@@ -232,7 +240,7 @@ impl<'a> Frame<'a> {
         })
     }
 
-    fn to_server_stomp(&'a self) -> Result<Message<ServerMsg>> {
+    fn to_server_msg(&'a self) -> Result<Message<ServerMsg>> {
         use ServerMsg::{Connected, Receipt, Error, Message as Msg};
         use expect_header as eh;
         use fetch_header as fh;
@@ -273,8 +281,8 @@ impl<'a> Frame<'a> {
             other => bail!("Frame not recognized: {:?}", String::from_utf8_lossy(other)),
         };
         let extra_headers = h.iter().filter_map(
-            |&(k, v)| if !expect_keys.contains(&k) {
-                Some((k.to_vec(), v.to_vec()))
+            |&(k, ref v)| if !expect_keys.contains(&k) {
+                Some((k.to_vec(), (&*v).to_vec()))
             } else {
                 None
             }).collect();
@@ -291,7 +299,6 @@ pub enum ServerMsg {
         version: String,
         session: Option<String>,
         server: Option<String>,
-        // TODO heartbeat is two ints
         heartbeat: Option<String>,
     },
     Message {
@@ -322,7 +329,7 @@ impl Message<ServerMsg> {
     // }
 
     fn from_frame<'a>(frame: Frame<'a>) -> Result<Message<ServerMsg>> {
-        frame.to_server_stomp()
+        frame.to_server_msg()
     }
 }
 
@@ -332,7 +339,7 @@ impl Message<ClientMsg> {
     }
 
     fn from_frame<'a>(frame: Frame<'a>) -> Result<Message<ClientMsg>> {
-        frame.to_client_stomp()
+        frame.to_client_msg()
     }
 }
 
@@ -354,7 +361,7 @@ pub enum ClientMsg {
         login: Option<String>,
         passcode: Option<String>,
         // TODO heartbeat is two ints
-        heartbeat: Option<String>,
+        heartbeat: Option<(u32, u32)>,
     },
     Send {
         destination: String,
@@ -393,18 +400,26 @@ pub enum ClientMsg {
     },
 }
 
-fn opt_str_to_bytes<'a>(s: &'a Option<String>) -> Option<&'a [u8]> {
-    s.as_ref().map(|v| v.as_bytes())
+fn opt_str_to_bytes<'a>(s: &'a Option<String>) -> Option<Cow<'a, [u8]>> {
+    s.as_ref().map(|v| Cow::Borrowed(v.as_bytes()))
 }
 
 fn get_content_length_header(body: &[u8]) -> Vec<u8> {
     format!("content-length:{}\n", body.len()).into()
 }
 
+fn parse_heartbeat(hb: &str) -> Result<(u32, u32)> {
+    let mut split = hb.splitn(1, ',');
+    let left = split.next().ok_or_else(|| format_err!("Bad heartbeat"))?;
+    let right = split.next().ok_or_else(|| format_err!("Bad heartbeat"))?;
+    Ok((left.parse()?, right.parse()?))
+}
+
 impl ClientMsg {
     fn to_frame<'a>(&'a self) -> Frame<'a> {
-        use opt_str_to_bytes as b;
+        use opt_str_to_bytes as sb;
         use ClientMsg::*;
+        use Cow::*;
         match *self {
             Connect {
                 ref accept_version,
@@ -415,16 +430,16 @@ impl ClientMsg {
             } => Frame::new(
                 b"CONNECT",
                 &[
-                    (b"accept-version", Some(accept_version.as_bytes())),
-                    (b"host", Some(host.as_bytes())),
-                    (b"login", b(login)),
-                    (b"passcode", b(passcode)),
-                    (b"heart-beat", b(heartbeat)),
+                    (b"accept-version", Some(Borrowed(accept_version.as_bytes()))),
+                    (b"host", Some(Borrowed(host.as_bytes()))),
+                    (b"login", sb(login)),
+                    (b"passcode", sb(passcode)),
+                    (b"heart-beat", heartbeat.map(|(v1, v2)| Owned(format!("{},{}", v1, v2).into())))
                 ],
                 None,
             ),
             Disconnect { ref receipt } => {
-                Frame::new(b"DISCONNECT", &[(b"receipt", b(&receipt))], None)
+                Frame::new(b"DISCONNECT", &[(b"receipt", sb(&receipt))], None)
             }
             Subscribe {
                 ref destination,
@@ -433,14 +448,14 @@ impl ClientMsg {
             } => Frame::new(
                 b"SUBSCRIBE",
                 &[
-                    (b"destination", Some(destination.as_bytes())),
-                    (b"id", Some(id.as_bytes())),
-                    (b"ack", b(ack)),
+                    (b"destination", Some(Borrowed(destination.as_bytes()))),
+                    (b"id", Some(Borrowed(id.as_bytes()))),
+                    (b"ack", sb(ack)),
                 ],
                 None,
             ),
             Unsubscribe { ref id } => {
-                Frame::new(b"UNSUBSCRIBE", &[(b"id", Some(id.as_bytes()))], None)
+                Frame::new(b"UNSUBSCRIBE", &[(b"id", Some(Borrowed(id.as_bytes())))], None)
             }
             Send {
                 ref destination,
@@ -449,8 +464,8 @@ impl ClientMsg {
             } => Frame::new(
                 b"SEND",
                 &[
-                    (b"destination", Some(destination.as_bytes())),
-                    (b"id", b(transaction)),
+                    (b"destination", Some(Borrowed(destination.as_bytes()))),
+                    (b"id", sb(transaction)),
                 ],
                 body.as_ref().map(|v| v.as_ref()),
             ),
@@ -460,8 +475,8 @@ impl ClientMsg {
             } => Frame::new(
                 b"ACK",
                 &[
-                    (b"id", Some(id.as_bytes())),
-                    (b"transaction", b(transaction)),
+                    (b"id", Some(Borrowed(id.as_bytes()))),
+                    (b"transaction", sb(transaction)),
                 ],
                 None,
             ),
@@ -471,24 +486,24 @@ impl ClientMsg {
             } => Frame::new(
                 b"NACK",
                 &[
-                    (b"id", Some(id.as_bytes())),
-                    (b"transaction", b(transaction)),
+                    (b"id", Some(Borrowed(id.as_bytes()))),
+                    (b"transaction", sb(transaction)),
                 ],
                 None,
             ),
             Begin { ref transaction } => Frame::new(
                 b"BEGIN",
-                &[(b"transaction", Some(transaction.as_bytes()))],
+                &[(b"transaction", Some(Borrowed(transaction.as_bytes())))],
                 None,
             ),
             Commit { ref transaction } => Frame::new(
                 b"COMMIT",
-                &[(b"transaction", Some(transaction.as_bytes()))],
+                &[(b"transaction", Some(Borrowed(transaction.as_bytes())))],
                 None,
             ),
             Abort { ref transaction } => Frame::new(
                 b"ABORT",
-                &[(b"transaction", Some(transaction.as_bytes()))],
+                &[(b"transaction", Some(Borrowed(transaction.as_bytes())))],
                 None,
             ),
         }
@@ -621,9 +636,10 @@ passcode:password\n\n\x00"
             (b"login", b"user"),
             (b"passcode", b"password"),
         ];
-        assert_eq!(frame.headers, headers_expect);
+        let fh: Vec<_> = frame.headers.iter().map(|&(k, ref v)| (k, &**v)).collect();
+        assert_eq!(fh, headers_expect);
         assert_eq!(frame.body, None);
-        let stomp = frame.to_client_stomp().unwrap();
+        let stomp = frame.to_client_msg().unwrap();
         let roundtrip = stomp.to_frame().serialize();
         assert_eq!(roundtrip, data);
     }
@@ -647,9 +663,10 @@ subscription:some-id
             (b"subscription", b"some-id"),
             (b"content-length", b"50"),
         ];
-        assert_eq!(frame.headers, headers_expect);
+        let fh: Vec<_> = frame.headers.iter().map(|&(k, ref v)| (k, &**v)).collect();
+        assert_eq!(fh, headers_expect);
         assert_eq!(frame.body, Some(body.as_bytes()));
-        frame.to_server_stomp().unwrap();
+        frame.to_server_msg().unwrap();
         // TODO to_frame for ServerMsg
         // let roundtrip = stomp.to_frame().serialize();
         // assert_eq!(roundtrip, data);
