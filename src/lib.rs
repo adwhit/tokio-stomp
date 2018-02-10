@@ -360,14 +360,12 @@ pub enum ClientMsg {
         host: String,
         login: Option<String>,
         passcode: Option<String>,
-        // TODO heartbeat is two ints
         heartbeat: Option<(u32, u32)>,
     },
     Send {
         destination: String,
         transaction: Option<String>,
         body: Option<Vec<u8>>,
-        // TODO: content-length
     },
     Subscribe {
         destination: String,
