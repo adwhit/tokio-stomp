@@ -146,6 +146,7 @@ fn expect_header<'a>(headers: &'a [(&'a [u8], Cow<'a,[u8]>)], key: &'a str) -> R
 }
 
 impl<'a> Frame<'a> {
+    #[allow(dead_code)]
     fn to_client_msg(&'a self) -> Result<Message<ClientMsg>> {
         use ClientMsg::*;
         use expect_header as eh;
@@ -337,6 +338,7 @@ impl Message<ServerMsg> {
     //     unimplemented!()
     // }
 
+    // TODO make this undead
     fn from_frame<'a>(frame: Frame<'a>) -> Result<Message<ServerMsg>> {
         frame.to_server_msg()
     }
@@ -347,6 +349,7 @@ impl Message<ClientMsg> {
         self.content.to_frame()
     }
 
+    #[allow(dead_code)]
     fn from_frame<'a>(frame: Frame<'a>) -> Result<Message<ClientMsg>> {
         frame.to_client_msg()
     }
