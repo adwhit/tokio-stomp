@@ -1,4 +1,4 @@
-#![feature(conservative_impl_trait)]
+//! tokio-stomp - A library for asynchronous streaming of STOMP messages
 
 extern crate bytes;
 #[macro_use]
@@ -293,32 +293,41 @@ impl<'a> Frame<'a> {
     }
 }
 
+/// A STOMP message sent from the server
+/// See the [Spec](https://stomp.github.io/stomp-specification-1.2.html) for more information
 #[derive(Debug, Clone)]
 pub enum ServerMsg {
+    /// Server acknowledgement of a new connection.
     Connected {
         version: String,
         session: Option<String>,
         server: Option<String>,
         heartbeat: Option<String>,
     },
+    /// Conveys messages from subscriptions to the client
     Message {
         destination: String,
         message_id: String,
         subscription: String,
         body: Option<Vec<u8>>,
     },
+    /// Sent from the server to the client once a server has successfully processed a client frame that requests a receipt
     Receipt {
         receipt_id: String,
     },
+    /// Something went wrong. After sending an Error, the server will close the connection
     Error {
         message: Option<String>,
         body: Option<Vec<u8>>,
     },
 }
 
+/// A representation of a STOMP frame
 #[derive(Debug)]
 pub struct Message<T> {
+    /// The message content
     pub content: T,
+    /// Headers present in the frame which were not required by the content
     pub extra_headers: Vec<(Vec<u8>, Vec<u8>)>,
 }
 
@@ -352,9 +361,12 @@ impl From<ClientMsg> for Message<ClientMsg> {
     }
 }
 
+/// A STOMP message sent by the client.
+/// See the [Spec](https://stomp.github.io/stomp-specification-1.2.html) for more information
 #[derive(Debug, Clone)]
 pub enum ClientMsg {
     // TODO remove Connect from ClientMsg
+    /// Request to connect to a server
     Connect {
         accept_version: String,
         host: String,
@@ -362,37 +374,48 @@ pub enum ClientMsg {
         passcode: Option<String>,
         heartbeat: Option<(u32, u32)>,
     },
+    /// Send a message to a destination in the messaging system
     Send {
         destination: String,
         transaction: Option<String>,
         body: Option<Vec<u8>>,
     },
+    /// Register to listen to a given destination
     Subscribe {
         destination: String,
         id: String,
         // TODO Ack should be enum
         ack: Option<String>,
     },
+    /// Remove an existing subscription
     Unsubscribe {
         id: String,
     },
+    /// Acknowledge consumption of a message from a subscription using 'client' or 'client-individual' acknowledgment.
     Ack {
+        // TODO ack and nack should be automatic?
         id: String,
         transaction: Option<String>,
     },
+    /// Notify the server that the client did not consume the message
     Nack {
         id: String,
         transaction: Option<String>,
     },
+    /// Start a transaction
     Begin {
         transaction: String,
     },
+    /// Commit an in-progress transaction
     Commit {
         transaction: String,
     },
+    /// Roll back an in-progress transaction
     Abort {
         transaction: String,
     },
+    /// Gracefully disconnect from the server
+    /// Clients MUST NOT send any more frames after the DISCONNECT frame is sent.
     Disconnect {
         receipt: Option<String>,
     },
@@ -540,6 +563,10 @@ impl Encoder for StompCodec {
     }
 }
 
+/// Connect to a STOMP server via TCP, including the connection handshake.
+/// If successful, returns a tuple of a message stream and a sender,
+/// which may be used to receive and send messages respectively.
+/// If connection fails for any reason, an error is returned.
 pub fn connect<T: Into<Message<ClientMsg>> + 'static>(
     address: String,
     login: Option<String>,
@@ -572,6 +599,7 @@ pub fn connect<T: Into<Message<ClientMsg>> + 'static>(
     ))
 }
 
+/// Structure representing a stream of STOMP messages
 pub struct StompStream {
     inner: Box<Stream<Item = Message<ServerMsg>, Error = failure::Error>>,
 }
@@ -590,7 +618,7 @@ fn handshake(
     host: String,
     login: Option<String>,
     passcode: Option<String>,
-) -> impl Future<Item = Transport, Error = failure::Error> {
+) -> Box<Future<Item = Transport, Error = failure::Error>> {
     let connect = Message {
         content: ClientMsg::Connect {
             accept_version: "1.1,1.2".into(),
@@ -602,7 +630,7 @@ fn handshake(
         extra_headers: vec![]
     };
 
-    transport
+    let fut = transport
         .send(connect)
         .and_then(|transport| transport.into_future().map_err(|(e, _)| e.into()))
         .and_then(|(msg, stream)| {
@@ -611,7 +639,9 @@ fn handshake(
             } else {
                 ferr(format_err!("unexpected reply"))
             }
-        })
+        });
+    Box::new(fut)
+
 }
 
 #[cfg(test)]
