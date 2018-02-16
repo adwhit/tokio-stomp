@@ -5,3 +5,5 @@ An async [STOMP](https://stomp.github.io/) client (and maybe eventually, server)
 It aims to be fast and fully-featured with a simple streaming interface.
 
 For usage, see the examples directory.
+
+License: [MIT](LICENSE)
