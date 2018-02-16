@@ -7,6 +7,8 @@ An async [STOMP](https://stomp.github.io/) client (and maybe eventually, server)
 
 It aims to be fast and fully-featured with a simple streaming interface.
 
-For usage, see the examples directory.
+[Documentation](https://docs.rs/tokio-stomp/0.1.0/tokio_stomp/)
+
+For full examples, see the examples directory.
 
 License: [MIT](LICENSE)

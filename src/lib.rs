@@ -569,7 +569,6 @@ impl Encoder for StompCodec {
 /// Connect to a STOMP server via TCP, including the connection handshake.
 /// If successful, returns a tuple of a message stream and a sender,
 /// which may be used to receive and send messages respectively.
-/// If connection fails for any reason, an error is returned.
 pub fn connect<T: Into<Message<ClientMsg>> + 'static>(
     address: String,
     login: Option<String>,
