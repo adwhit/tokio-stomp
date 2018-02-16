@@ -9,6 +9,10 @@ use tokio::executor::current_thread::{run, spawn};
 use futures::future::ok;
 use futures::prelude::*;
 
+// This examples consists of two theads, each of which connects to a local server,
+// and then sends either PING or PONG messages to the other thread while listening
+// for replies. This continues indefinitely (ctrl-c to exit)
+
 fn main() {
     std::thread::spawn(|| {
         let (fut1, tx1) = tokio_stomp::connect("127.0.0.1:61613".into(), None, None).unwrap();

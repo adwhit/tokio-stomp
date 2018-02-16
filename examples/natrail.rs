@@ -9,7 +9,11 @@ use tokio::executor::current_thread::{run, spawn};
 use futures::future::ok;
 use futures::prelude::*;
 
+// Stream data from the UK national rail datafeed.
+// See http://nrodwiki.rockshore.net/index.php/Darwin:Push_Port for more information
+
 fn main() {
+    // Dummy usernames/passwords
     let username = "d3user";
     let password = "d3password";
     let queue = std::env::var("STOMP_QUEUE").expect("Env var STOMP_QUEUE not found");
