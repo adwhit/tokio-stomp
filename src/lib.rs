@@ -12,7 +12,8 @@ extern crate tokio_io;
 use bytes::{BufMut, BytesMut};
 use futures::prelude::*;
 use futures::sync::mpsc;
-use futures::future::{err as ferr, ok as fok};
+use futures::future::{err as ferr, ok as fok, join_all};
+use futures::stream::SplitSink;
 use tokio::net::{TcpStream, TcpListener};
 use tokio::executor::current_thread::spawn;
 use tokio_io::codec::{Decoder, Encoder, Framed};
@@ -26,6 +27,7 @@ use std::collections::HashMap;
 type Result<T> = std::result::Result<T, failure::Error>;
 type ClientTransport = Framed<TcpStream, ClientCodec>;
 type ServerTransport = Framed<TcpStream, ServerCodec>;
+type Connections = HashMap<SocketAddr, SplitSink<ServerTransport>>;
 
 #[derive(Debug)]
 struct Frame<'a> {
@@ -721,13 +723,40 @@ struct Server {
 
 impl Server {
     fn new<T: ToSocketAddrs>(addr: T) -> Result<Server> {
-        let connections: HashMap<SocketAddr, (WriteHalf<TcpStream>, Vec<String>)> = HashMap::new();
+        let mut connections: Connections = HashMap::new();
+        let mut subs_ip_lookup: HashMap<String, Vec<SocketAddr>> = HashMap::new();
+        let mut ip_subs_lookup: HashMap<SocketAddr, Vec<String>> = HashMap::new();
         let addr = addr.to_socket_addrs().unwrap().next().unwrap();
         let listener = TcpListener::bind(&addr)?;
-        let fut = listener.incoming().for_each(|conn| {
+        let fut = listener.incoming().for_each(move |conn| {
             let addr = conn.peer_addr().unwrap();
-            let (reader, writer) = conn.split();
-            connections.insert(addr, (writer, Vec::new())).unwrap();
+            let transport = conn.framed(ServerCodec);
+            let (sink, source) = transport.split();
+            connections.insert(addr, sink).unwrap();
+            source.for_each(|msg| {
+                let content = if let ClientMsg::Send {
+                    destination,
+                    transaction,
+                    body
+                } = msg.content {
+                    ServerMsg::Message {
+                        destination,
+                        message_id: "hello".into(),
+                        subscription: "hi".into(),
+                        body
+                    }
+                } else {
+                    panic!("rrarrr")
+                };
+                let clientmsg = Message {
+                    content,
+                    extra_headers: vec![]
+                };
+                let send_fut = join_all(connections.values().map(|s| {
+                    sink.send(clientmsg)
+                }));
+                fok(())
+            });
             fok(())
         });
         Ok(Server { inner: Box::new(fut.map_err(|e| e.into())) })
