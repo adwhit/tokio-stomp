@@ -319,7 +319,7 @@ impl<'a> Frame<'a> {
 /// See the [Spec](https://stomp.github.io/stomp-specification-1.2.html) for more information
 #[derive(Debug, Clone)]
 pub enum ServerMsg {
-    /// Server acknowledgement of a new connection.
+    #[doc(hidden)]
     Connected {
         version: String,
         session: Option<String>,
@@ -389,8 +389,7 @@ impl From<ClientMsg> for Message<ClientMsg> {
 /// See the [Spec](https://stomp.github.io/stomp-specification-1.2.html) for more information
 #[derive(Debug, Clone)]
 pub enum ClientMsg {
-    // TODO remove Connect from ClientMsg
-    /// Request to connect to a server
+    #[doc(hidden)]
     Connect {
         accept_version: String,
         host: String,
