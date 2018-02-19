@@ -13,16 +13,19 @@ use bytes::{BufMut, BytesMut};
 use futures::prelude::*;
 use futures::sync::mpsc;
 use futures::future::{err as ferr, ok as fok};
-use tokio::net::TcpStream;
+use tokio::net::{TcpStream, TcpListener};
 use tokio::executor::current_thread::spawn;
 use tokio_io::codec::{Decoder, Encoder, Framed};
+use tokio_io::io::WriteHalf;
 use tokio_io::AsyncRead;
 
-use std::net::ToSocketAddrs;
+use std::net::{SocketAddr, ToSocketAddrs};
 use std::borrow::Cow;
+use std::collections::HashMap;
 
 type Result<T> = std::result::Result<T, failure::Error>;
-type Transport = Framed<TcpStream, StompCodec>;
+type ClientTransport = Framed<TcpStream, ClientCodec>;
+type ServerTransport = Framed<TcpStream, ServerCodec>;
 
 #[derive(Debug)]
 struct Frame<'a> {
@@ -570,9 +573,9 @@ impl ClientMsg {
     }
 }
 
-struct StompCodec;
+struct ClientCodec;
 
-impl Decoder for StompCodec {
+impl Decoder for ClientCodec {
     type Item = Message<ServerMsg>;
     type Error = failure::Error;
 
@@ -590,7 +593,7 @@ impl Decoder for StompCodec {
     }
 }
 
-impl Encoder for StompCodec {
+impl Encoder for ClientCodec {
     type Item = Message<ClientMsg>;
     type Error = failure::Error;
 
@@ -599,6 +602,39 @@ impl Encoder for StompCodec {
         Ok(())
     }
 }
+
+struct ServerCodec;
+
+impl Decoder for ServerCodec {
+    type Item = Message<ClientMsg>;
+    type Error = failure::Error;
+
+    fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>> {
+        unimplemented!()
+        // let (item, offset) = match parse_frame(&src) {
+        //     Ok((remain, frame)) => {
+        //         (Message::<ServerMsg>::from_frame(frame),
+        //          remain.as_ptr() as usize - src.as_ptr() as usize)
+        //     }
+        //     Err(nom::Err::Incomplete(_)) => return Ok(None),
+        //     Err(e) => bail!("Parse failed: {:?}", e),
+        // };
+        // src.split_to(offset);
+        // item.map(|v| Some(v))
+    }
+}
+
+impl Encoder for ServerCodec {
+    type Item = Message<ServerMsg>;
+    type Error = failure::Error;
+
+    fn encode(&mut self, item: Self::Item, dst: &mut BytesMut) -> Result<()> {
+        unimplemented!()
+        // item.to_frame().serialize(dst);
+        // Ok(())
+    }
+}
+
 
 /// Connect to a STOMP server via TCP, including the connection handshake.
 /// If successful, returns a tuple of a message stream and a sender,
@@ -613,7 +649,7 @@ pub fn connect<T: Into<Message<ClientMsg>> + 'static>(
     let inner = TcpStream::connect(&addr)
         .map_err(|e| e.into())
         .and_then(|tcp| {
-            let transport = tcp.framed(StompCodec);
+            let transport = tcp.framed(ClientCodec);
             handshake(transport, address, login, passcode)
         })
         .and_then(|tcp| {
@@ -650,11 +686,11 @@ impl Stream for StompStream {
 }
 
 fn handshake(
-    transport: Transport,
+    transport: ClientTransport,
     host: String,
     login: Option<String>,
     passcode: Option<String>,
-) -> Box<Future<Item = Transport, Error = failure::Error>> {
+) -> Box<Future<Item = ClientTransport, Error = failure::Error>> {
     let connect = Message {
         content: ClientMsg::Connect {
             accept_version: "1.1,1.2".into(),
@@ -677,7 +713,25 @@ fn handshake(
             }
         });
     Box::new(fut)
+}
 
+struct Server {
+        inner: Box<Future<Item=(), Error=failure::Error>>
+}
+
+impl Server {
+    fn new<T: ToSocketAddrs>(addr: T) -> Result<Server> {
+        let connections: HashMap<SocketAddr, (WriteHalf<TcpStream>, Vec<String>)> = HashMap::new();
+        let addr = addr.to_socket_addrs().unwrap().next().unwrap();
+        let listener = TcpListener::bind(&addr)?;
+        let fut = listener.incoming().for_each(|conn| {
+            let addr = conn.peer_addr().unwrap();
+            let (reader, writer) = conn.split();
+            connections.insert(addr, (writer, Vec::new())).unwrap();
+            fok(())
+        });
+        Ok(Server { inner: Box::new(fut.map_err(|e| e.into())) })
+    }
 }
 
 #[cfg(test)]
