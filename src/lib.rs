@@ -704,8 +704,9 @@ passcode:password\n\n\x00"
         assert_eq!(fh, headers_expect);
         assert_eq!(frame.body, None);
         let stomp = frame.to_client_msg().unwrap();
-        let roundtrip = stomp.to_frame().serialize();
-        assert_eq!(roundtrip, data);
+        let mut buffer = BytesMut::new();
+        stomp.to_frame().serialize(&mut buffer);
+        assert_eq!(&*buffer, &*data);
     }
 
     #[test]
