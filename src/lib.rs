@@ -50,30 +50,51 @@ impl<'a> Frame<'a> {
         }
     }
 
-    // TODO make this an "impl Write"
-    fn serialize(&self) -> Vec<u8> {
-        let mut buffer = Vec::with_capacity(
-            self.command.len()  // TODO uhhhh
-                           + self.body.map(|b| b.len()).unwrap_or(0) + 100,
-        );
-        buffer.extend(self.command);
-        buffer.push(b'\n');
-        // TODO escaping. use bytes crate?
-        self.headers.iter().for_each(|&(k, ref v)| {
-            buffer.extend(k);
-            buffer.push(b':');
-            buffer.extend(&**v);
-            buffer.push(b'\n');
+    fn serialize(&self, buffer: &mut BytesMut) {
+        fn write_escaped(b: u8, buffer: &mut BytesMut) {
+            match b {
+                b'\r' => {
+                    buffer.put(b'\\'); buffer.put(b'r')
+                },
+                b'\n' => {
+                    buffer.put(b'\\'); buffer.put(b'n')
+                }
+                b':' => {
+                    buffer.put(b'\\'); buffer.put(b'c')
+                }
+                b'\\' => {
+                    buffer.put(b'\\'); buffer.put(b'\\')
+                }
+                b => buffer.put(b)
+            }
+        }
+        let requires = self.command.len() +
+            self.body.map(|b| b.len() + 20).unwrap_or(0) +
+            self.headers.iter().fold(0, |acc, &(ref k, ref v)|
+                                     acc + k.len() + v.len()) + 30;
+        if buffer.remaining_mut() < requires {
+            buffer.reserve(requires);
+        }
+        buffer.put_slice(self.command);
+        buffer.put(b'\n');
+        self.headers.iter().for_each(|&(key, ref val)| {
+            for byte in key {
+                write_escaped(*byte, buffer);
+            }
+            buffer.put(b':');
+            for byte in val.iter() {
+                write_escaped(*byte, buffer);
+            }
+            buffer.put(b'\n');
         });
         if let Some(body) = self.body {
-            buffer.extend(&get_content_length_header(&body));
-            buffer.push(b'\n');
-            buffer.extend(body);
+            buffer.put_slice(&get_content_length_header(&body));
+            buffer.put(b'\n');
+            buffer.put_slice(body);
         } else {
-            buffer.push(b'\n');
+            buffer.put(b'\n');
         }
-        buffer.push(b'\x00');
-        buffer
+        buffer.put(b'\x00');
     }
 }
 
@@ -559,9 +580,7 @@ impl Encoder for StompCodec {
     type Error = failure::Error;
 
     fn encode(&mut self, item: Self::Item, dst: &mut BytesMut) -> Result<()> {
-        let buf = item.to_frame().serialize();
-        dst.reserve(buf.len());
-        dst.put(&buf);
+        item.to_frame().serialize(dst);
         Ok(())
     }
 }
