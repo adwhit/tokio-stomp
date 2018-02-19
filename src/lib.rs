@@ -209,7 +209,13 @@ impl<'a> Frame<'a> {
                 Subscribe {
                     destination: eh(h, "destination")?,
                     id: eh(h, "id")?,
-                    ack: fh(h, "ack"),
+                    ack: match fh(h, "ack").as_ref().map(|s| s.as_str()) {
+                        Some("auto") => Some(AckMode::Auto),
+                        Some("client") => Some(AckMode::Client),
+                        Some("client-individual") => Some(AckMode::ClientIndividual),
+                        Some(other) => bail!("Invalid ack mode: {}", other),
+                        None => None
+                    }
                 }
             },
             b"UNSUBSCRIBE" => {
@@ -407,8 +413,7 @@ pub enum ClientMsg {
     Subscribe {
         destination: String,
         id: String,
-        // TODO Ack should be enum
-        ack: Option<String>,
+        ack: Option<AckMode>,
     },
     /// Remove an existing subscription
     Unsubscribe {
@@ -442,6 +447,13 @@ pub enum ClientMsg {
     Disconnect {
         receipt: Option<String>,
     },
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum AckMode {
+    Auto,
+    Client,
+    ClientIndividual
 }
 
 fn opt_str_to_bytes<'a>(s: &'a Option<String>) -> Option<Cow<'a, [u8]>> {
@@ -494,7 +506,11 @@ impl ClientMsg {
                 &[
                     (b"destination", Some(Borrowed(destination.as_bytes()))),
                     (b"id", Some(Borrowed(id.as_bytes()))),
-                    (b"ack", sb(ack)),
+                    (b"ack", ack.map(|ack| match ack {
+                        AckMode::Auto => Borrowed(&b"auto"[..]),
+                        AckMode::Client => Borrowed(&b"client"[..]),
+                        AckMode::ClientIndividual => Borrowed(&b"client-individual"[..])
+                    }))
                 ],
                 None,
             ),
