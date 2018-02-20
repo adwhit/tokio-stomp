@@ -738,15 +738,20 @@ fn handshake(
     Box::new(fut)
 }
 
-struct Server {
+pub struct Server {
     inner: Box<Future<Item = (), Error = failure::Error>>,
 }
 
+#[derive(Default)]
+struct ServerState {
+    connections: Connections,
+    subs_ip_lookup: HashMap<String, Vec<SocketAddr>>,
+    ip_subs_lookup: HashMap<SocketAddr, Vec<String>>,
+}
+
 impl Server {
-    fn new<T: ToSocketAddrs>(addr: T) -> Result<Server> {
-        let mut connections: Connections = HashMap::new();
-        let mut subs_ip_lookup: HashMap<String, Vec<SocketAddr>> = HashMap::new();
-        let mut ip_subs_lookup: HashMap<SocketAddr, Vec<String>> = HashMap::new();
+    pub fn new<T: ToSocketAddrs>(addr: T) -> Result<Server> {
+        let mut state = ServerState::default();
         let addr = addr.to_socket_addrs().unwrap().next().unwrap();
         let listener = TcpListener::bind(&addr)?;
         let fut = listener.incoming().for_each(move |conn| {
@@ -755,33 +760,32 @@ impl Server {
             let (sink, source) = transport.split();
 
             let (tx, rx) = mpsc::unbounded();
-            connections.insert(addr, tx).unwrap();
+            state.connections.insert(addr, tx).unwrap();
             let sink_fwd_fut = sink.send_all(rx.map_err(|()| format_err!("Chennel closed")))
                 .map(|_| println!("Sink cloned"))
                 .map_err(|e| eprintln!("{}", e));
             spawn(sink_fwd_fut);
 
             source.for_each(|msg| {
-                let content = if let ClientMsg::Send {
-                    destination,
-                    transaction,
-                    body,
-                } = msg.content
-                {
-                    ServerMsg::Message {
+                let content = match msg.content {
+                    ClientMsg::Send {
+                        destination,
+                        transaction,
+                        body,
+                    } => ServerMsg::Message {
                         destination,
                         message_id: "hello".into(),
                         subscription: "hi".into(),
                         body,
-                    }
-                } else {
-                    panic!("rrarrr")
+                    },
+                    _ => unimplemented!("Unknown message")
+
                 };
                 let servermsg = Rc::new(Message {
                     content,
                     extra_headers: vec![],
                 });
-                let send_fut = join_all(Iterator::map(connections.values_mut(), |sink| {
+                let send_fut = join_all(Iterator::map(state.connections.values_mut(), |sink| {
                     let servermsg = servermsg.clone();
                     sink.send(servermsg).map(|_| ())
                 }));
@@ -793,6 +797,33 @@ impl Server {
             inner: Box::new(fut.map_err(|e| e.into())),
         })
     }
+}
+
+fn source_each_future(msg: Message<ClientMsg>, state: ServerState) -> Box<Future<Item=(), Error=failure::Error>> {
+    let content = match msg.content {
+        ClientMsg::Send {
+            destination,
+            transaction,
+            body,
+        } => ServerMsg::Message {
+            destination,
+            message_id: "hello".into(),
+            subscription: "hi".into(),
+            body,
+        },
+        _ => unimplemented!("Unknown message")
+
+    };
+    let servermsg = Rc::new(Message {
+        content,
+        extra_headers: vec![],
+    });
+    Box::new(fok(state).and_then(move |state| join_all(
+        state.connections.values().map(move|sink| {
+            let servermsg = servermsg.clone();
+            sink.unbounded_send(servermsg).map(|_| ())
+        })
+    ).map(|_| ()).map_err(|e| format_err!("{}", e))))
 }
 
 #[cfg(test)]
