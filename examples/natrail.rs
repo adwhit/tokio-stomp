@@ -18,7 +18,8 @@ fn main() {
     let password = "d3password";
     let queue = std::env::var("STOMP_QUEUE").expect("Env var STOMP_QUEUE not found");
     let uri = "datafeeds.nationalrail.co.uk:61613";
-    let (fut, tx) = tokio_stomp::connect(uri.into(), Some(username.into()), Some(password.into())).unwrap();
+    let (fut, tx) =
+        tokio_stomp::connect(uri.into(), Some(username.into()), Some(password.into())).unwrap();
     tx.unbounded_send(ClientMsg::Subscribe {
         destination: queue.into(),
         id: "1".into(),
@@ -29,7 +30,11 @@ fn main() {
 
     let fut = fut.for_each(move |item| {
         for (k, v) in item.extra_headers {
-            println!("{}:{}", String::from_utf8_lossy(&k), String::from_utf8_lossy(&v))
+            println!(
+                "{}:{}",
+                String::from_utf8_lossy(&k),
+                String::from_utf8_lossy(&v)
+            )
         }
         if let ServerMsg::Message { body, .. } = item.content {
             println!("{}\n", String::from_utf8_lossy(&body.unwrap()));
