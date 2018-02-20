@@ -13,11 +13,9 @@ use bytes::{BufMut, BytesMut};
 use futures::prelude::*;
 use futures::sync::mpsc;
 use futures::future::{err as ferr, join_all, ok as fok};
-use futures::stream::SplitSink;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::executor::current_thread::spawn;
 use tokio_io::codec::{Decoder, Encoder, Framed};
-use tokio_io::io::WriteHalf;
 use tokio_io::AsyncRead;
 
 use std::net::{SocketAddr, ToSocketAddrs};
@@ -766,31 +764,13 @@ impl Server {
                 .map_err(|e| eprintln!("{}", e));
             spawn(sink_fwd_fut);
 
-            source.for_each(|msg| {
-                let content = match msg.content {
-                    ClientMsg::Send {
-                        destination,
-                        transaction,
-                        body,
-                    } => ServerMsg::Message {
-                        destination,
-                        message_id: "hello".into(),
-                        subscription: "hi".into(),
-                        body,
-                    },
-                    _ => unimplemented!("Unknown message")
-
-                };
-                let servermsg = Rc::new(Message {
-                    content,
-                    extra_headers: vec![],
-                });
-                let send_fut = join_all(Iterator::map(state.connections.values_mut(), |sink| {
-                    let servermsg = servermsg.clone();
-                    sink.send(servermsg).map(|_| ())
-                }));
+            let source_fut = source.for_each(|msg| {
+                let fut = forward_msg_future(msg, &state);
+                spawn(fut.map_err(|e| println!("{}", e)));
                 fok(())
-            });
+            }).map_err(|e| eprintln!("{}", e));
+            spawn(source_fut);
+
             fok(())
         });
         Ok(Server {
@@ -799,11 +779,11 @@ impl Server {
     }
 }
 
-fn source_each_future(msg: Message<ClientMsg>, state: ServerState) -> Box<Future<Item=(), Error=failure::Error>> {
+fn forward_msg_future(msg: Message<ClientMsg>, state: &ServerState) -> Box<Future<Item=(), Error=failure::Error>> {
     let content = match msg.content {
         ClientMsg::Send {
             destination,
-            transaction,
+            transaction: _,
             body,
         } => ServerMsg::Message {
             destination,
@@ -818,12 +798,11 @@ fn source_each_future(msg: Message<ClientMsg>, state: ServerState) -> Box<Future
         content,
         extra_headers: vec![],
     });
-    Box::new(fok(state).and_then(move |state| join_all(
-        state.connections.values().map(move|sink| {
-            let servermsg = servermsg.clone();
-            sink.unbounded_send(servermsg).map(|_| ())
-        })
-    ).map(|_| ()).map_err(|e| format_err!("{}", e))))
+    let results: Vec<_> = state.connections.values().map(move |sink| {
+        let servermsg = servermsg.clone();
+        sink.unbounded_send(servermsg).map_err(|_| format_err!("Send failed"))
+    }).collect();
+    Box::new(join_all(results).map(|_| ()).map_err(|e| format_err!("{}", e)))
 }
 
 #[cfg(test)]
