@@ -751,28 +751,24 @@ struct ServerState {
     ip_subs_lookup: HashMap<SocketAddr, Vec<String>>,
 }
 
-fn state_handler(rx: RxC) -> Box<Future<Item=(), Error=failure::Error>> {
+fn state_handler(rx: RxC) -> Box<Future<Item = (), Error = failure::Error>> {
     use ClientMsg::*;
-    Box::new(rx.map_err(|()| format_err!("State receiver error").into()).for_each(|msg| {
+    let mut state = ServerState::default();
+    Box::new(rx.for_each(move |msg| {
         match msg.content {
             Connect {
                 accept_version,
                 host,
                 login,
                 passcode,
-                heartbeat
+                heartbeat,
             } => {
                 // Reply with connected
                 unimplemented!()
             }
             Send {
-                destination,
-                transaction,
-                body
-            } => {
-                // Forward to the subscribers
-                unimplemented!()
-            },
+                destination, body, ..
+            } => route_message(&state, destination, body),
             Subscribe {
                 destination,
                 id,
@@ -780,18 +776,48 @@ fn state_handler(rx: RxC) -> Box<Future<Item=(), Error=failure::Error>> {
             } => {
                 // add subscription
                 unimplemented!()
-            },
+            }
             Unsubscribe { id } => {
                 // remove subscription
                 unimplemented!()
-            },
+            }
             Disconnect { receipt } => {
                 // remove subscription
                 unimplemented!()
-            },
-            _ => ferr(format_err!("Not yet implemented"))
+            }
+            _ => unimplemented!(),
         }
-    }))
+    }).map_err(|()| format_err!("")))
+}
+
+fn route_message(
+    state: &ServerState,
+    destination: String,
+    body: Option<Vec<u8>>,
+) -> Box<Future<Item = (), Error = ()>> {
+    let servermsg = Rc::new(Message {
+        content: ServerMsg::Message {
+            destination,
+            message_id: "hello".into(),
+            subscription: "hi".into(),
+            body,
+        },
+        extra_headers: vec![],
+    });
+    let results: Vec<_> = state
+        .connections
+        .values()
+        .map(move |sink| {
+            let servermsg = servermsg.clone();
+            sink.unbounded_send(servermsg)
+                .map_err(|_| format_err!("Send failed"))
+        })
+        .collect();
+    Box::new(
+        join_all(results)
+            .map(|_| ())
+            .map_err(|e| eprintln!("{}", e)),
+    )
 }
 
 impl Server {
@@ -814,9 +840,16 @@ impl Server {
 
             spawn(
                 rxs.map_err(|()| format_err!("Channel closed"))
-                    .forward(sink).map(|_| ()).map_err(|e| eprintln!("{}", e))
+                    .forward(sink)
+                    .map(|_| ())
+                    .map_err(|e| eprintln!("{}", e)),
             );
-            spawn(source.forward(txc.clone()).map(|_| ()).map_err(|e| eprintln!("{}", e)));
+            spawn(
+                source
+                    .forward(txc.clone())
+                    .map(|_| ())
+                    .map_err(|e| eprintln!("{}", e)),
+            );
 
             fok(())
         });
@@ -825,44 +858,6 @@ impl Server {
         })
     }
 }
-
-// fn forward_msg_future(
-//     msg: Message<ClientMsg>,
-//     state: State,
-// ) -> Box<Future<Item = (), Error = failure::Error>> {
-//     let content = match msg.content {
-//         ClientMsg::Send {
-//             destination,
-//             transaction: _,
-//             body,
-//         } => ServerMsg::Message {
-//             destination,
-//             message_id: "hello".into(),
-//             subscription: "hi".into(),
-//             body,
-//         },
-//         _ => unimplemented!("Unknown message"),
-//     };
-//     let servermsg = Rc::new(Message {
-//         content,
-//         extra_headers: vec![],
-//     });
-//     let results: Vec<_> = state
-//         .borrow()
-//         .connections
-//         .values()
-//         .map(move |sink| {
-//             let servermsg = servermsg.clone();
-//             sink.unbounded_send(servermsg)
-//                 .map_err(|_| format_err!("Send failed"))
-//         })
-//         .collect();
-//     Box::new(
-//         join_all(results)
-//             .map(|_| ())
-//             .map_err(|e| format_err!("{}", e)),
-//     )
-// }
 
 #[cfg(test)]
 mod tests {
