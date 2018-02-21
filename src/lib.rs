@@ -675,7 +675,7 @@ pub fn connect<T: Into<Message<ClientMsg>> + 'static>(
         .map_err(|e| e.into())
         .and_then(|tcp| {
             let transport = tcp.framed(ClientCodec);
-            handshake(transport, address, login, passcode)
+            client_handshake(transport, address, login, passcode)
         })
         .and_then(|tcp| {
             let (sink, stream) = tcp.split();
@@ -710,7 +710,7 @@ impl Stream for StompStream {
     }
 }
 
-fn handshake(
+fn client_handshake(
     transport: ClientTransport,
     host: String,
     login: Option<String>,
@@ -740,9 +740,7 @@ fn handshake(
     Box::new(fut)
 }
 
-pub struct Server {
-    inner: Box<Future<Item = (), Error = failure::Error>>,
-}
+pub struct Server;
 
 #[derive(Default)]
 struct ServerState {
@@ -751,21 +749,15 @@ struct ServerState {
     ip_subs_lookup: HashMap<SocketAddr, Vec<String>>,
 }
 
-fn state_handler(rx: RxC) -> Box<Future<Item = (), Error = failure::Error>> {
+fn state_handler(
+    rx_clientmsg: RxC,
+    rx_tcpsink: u8,
+) -> Box<Future<Item = (), Error = failure::Error>> {
     use ClientMsg::*;
+    //state.borrow_mut().connections.insert(addr, txs).unwrap();
     let mut state = ServerState::default();
     Box::new(rx.for_each(move |msg| {
         match msg.content {
-            Connect {
-                accept_version,
-                host,
-                login,
-                passcode,
-                heartbeat,
-            } => {
-                // Reply with connected
-                unimplemented!()
-            }
             Send {
                 destination, body, ..
             } => route_message(&state, destination, body),
@@ -826,27 +818,47 @@ impl Server {
         let addr = addr.to_socket_addrs().unwrap().next().unwrap();
         let listener = TcpListener::bind(&addr)?;
 
-        let (txc, rxc) = mpsc::unbounded();
-        spawn(state_handler(rxc).map_err(|e| eprintln!("{}", e)));
+        let (tx_clientmsg, rx_clientmsg) = mpsc::unbounded();
+        let (tx_tcpsink, rx_tcpsink) = mpsc::unbounded();
+
+        spawn(state_handler(rx_clientmsg, rx_tcpsink).map_err(|e| eprintln!("{}", e)));
 
         let fut = listener.incoming().for_each(move |conn| {
             let addr = conn.peer_addr().unwrap();
             let transport = conn.framed(ServerCodec);
-            let (sink, source) = transport.split();
 
-            let (txs, rxs) = mpsc::unbounded();
+            // do the handshake here, then send to the state handler
+            let do_handshake = transport.into_future().and_then(|(msg, transport)| {
+                // handshake
+                if let Some(ClientMsg::Connect { .. }) = msg.map(|m| m.content) {
+                    let reply = Message {
+                        extra_headers: vec![],
+                        content: Connected {
+                            version: "1.2".into(),
+                            session: None,
+                            server: None,
+                            heartbeat: None,
+                        },
+                    };
+                    transport.send(reply)
+                } else {
+                    panic!("Bad handshake")
+                }
+            }).and_then(|transport| {
+                // Send to state handler
+                tx_transport(transport)
+            });
 
-            //state.borrow_mut().connections.insert(addr, txs).unwrap();
+            spawn(do_handshake.map_err(|e| eprintln!("{}" e)));
 
-            spawn(
-                rxs.map_err(|()| format_err!("Channel closed"))
-                    .forward(sink)
-                    .map(|_| ())
-                    .map_err(|e| eprintln!("{}", e)),
-            );
+
+            // broadcast channel
+            // need to get txs into state
+            let (tx_servermsg, rx_servermsg) = mpsc::unbounded();
+
             spawn(
                 source
-                    .forward(txc.clone())
+                    .forward(tx_clientmsg.clone())
                     .map(|_| ())
                     .map_err(|e| eprintln!("{}", e)),
             );
