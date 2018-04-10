@@ -721,7 +721,7 @@ struct Server {
 
 impl Server {
     fn new<T: ToSocketAddrs>(addr: T) -> Result<Server> {
-        let connections: HashMap<SocketAddr, (WriteHalf<TcpStream>, Vec<String>)> = HashMap::new();
+        let mut connections: HashMap<SocketAddr, (WriteHalf<TcpStream>, Vec<String>)> = HashMap::new();
         let addr = addr.to_socket_addrs().unwrap().next().unwrap();
         let listener = TcpListener::bind(&addr)?;
         let fut = listener.incoming().for_each(|conn| {
