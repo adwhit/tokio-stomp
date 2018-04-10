@@ -724,7 +724,7 @@ impl Server {
         let mut connections: HashMap<SocketAddr, (WriteHalf<TcpStream>, Vec<String>)> = HashMap::new();
         let addr = addr.to_socket_addrs().unwrap().next().unwrap();
         let listener = TcpListener::bind(&addr)?;
-        let fut = listener.incoming().for_each(|conn| {
+        let fut = listener.incoming().for_each(move |conn| {
             let addr = conn.peer_addr().unwrap();
             let (reader, writer) = conn.split();
             connections.insert(addr, (writer, Vec::new())).unwrap();
