@@ -8,11 +8,11 @@ extern crate futures;
 extern crate nom;
 extern crate tokio;
 
-use std::borrow::Cow;
 use frame::Frame;
+use std::borrow::Cow;
 
-mod frame;
 pub mod client;
+mod frame;
 pub mod server;
 
 pub(crate) type Result<T> = std::result::Result<T, failure::Error>;

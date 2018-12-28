@@ -1,15 +1,15 @@
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::net::{SocketAddr, ToSocketAddrs};
-use std::cell::RefCell;
 use std::rc::Rc;
 
 use bytes::BytesMut;
-use futures::sync::mpsc;
-use futures::prelude::*;
 use futures::future::join_all;
+use futures::prelude::*;
+use futures::sync::mpsc;
 use tokio::codec::{Decoder, Encoder};
 
-use {Message, ServerMsg, ClientMsg, Result};
+use {ClientMsg, Message, Result, ServerMsg};
 
 type TxS = mpsc::UnboundedSender<Rc<Message<ServerMsg>>>;
 type RxS = mpsc::UnboundedReceiver<Rc<Message<ServerMsg>>>;
@@ -187,4 +187,3 @@ impl<'a> Encoder for ServerCodec {
         // Ok(())
     }
 }
-

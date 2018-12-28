@@ -1,18 +1,18 @@
 use std::net::ToSocketAddrs;
 
 use bytes::BytesMut;
+use futures::future::{err as ferr, ok as fok};
 use futures::prelude::*;
 use futures::sync::mpsc;
-use futures::future::{err as ferr, ok as fok};
 
-use tokio::executor::current_thread::spawn;
 use tokio::codec::{Decoder, Encoder, Framed};
+use tokio::executor::current_thread::spawn;
 use tokio::net::TcpStream;
 
 type ClientTransport = Framed<TcpStream, ClientCodec>;
 
-use {ClientMsg, ServerMsg, Message, Result};
 use frame;
+use {ClientMsg, Message, Result, ServerMsg};
 
 /// Connect to a STOMP server via TCP, including the connection handshake.
 /// If successful, returns a tuple of a message stream and a sender,

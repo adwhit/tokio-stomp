@@ -19,7 +19,8 @@ fn main() {
     let queue = std::env::var("STOMP_QUEUE").expect("Env var STOMP_QUEUE not found");
     let uri = "datafeeds.nationalrail.co.uk:61613";
     let (fut, tx) =
-        tokio_stomp::client::connect(uri.into(), Some(username.into()), Some(password.into())).unwrap();
+        tokio_stomp::client::connect(uri.into(), Some(username.into()), Some(password.into()))
+            .unwrap();
     tx.unbounded_send(ClientMsg::Subscribe {
         destination: queue.into(),
         id: "1".into(),
