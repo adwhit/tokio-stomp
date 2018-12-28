@@ -5,7 +5,7 @@ extern crate tokio_stomp;
 use std::time::Duration;
 
 use tokio_stomp::*;
-use tokio::executor::current_thread::{run, spawn};
+use tokio::runtime::current_thread::block_on_all;
 use futures::future::ok;
 use futures::prelude::*;
 
@@ -63,5 +63,5 @@ fn main() {
         ok(())
     }).map_err(|e| eprintln!("{}", e));
 
-    run(|_| spawn(fut));
+    block_on_all(fut).unwrap();
 }

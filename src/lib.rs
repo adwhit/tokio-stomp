@@ -7,7 +7,6 @@ extern crate futures;
 #[macro_use]
 extern crate nom;
 extern crate tokio;
-extern crate tokio_io;
 
 use bytes::{BufMut, BytesMut};
 use futures::prelude::*;
@@ -15,9 +14,9 @@ use futures::sync::mpsc;
 use futures::future::{err as ferr, ok as fok};
 use tokio::net::{TcpStream, TcpListener};
 use tokio::executor::current_thread::spawn;
-use tokio_io::codec::{Decoder, Encoder, Framed};
-use tokio_io::io::WriteHalf;
-use tokio_io::AsyncRead;
+use tokio::codec::{Decoder, Encoder, Framed};
+use tokio::io::WriteHalf;
+use tokio::io::AsyncRead;
 
 use std::net::{SocketAddr, ToSocketAddrs};
 use std::borrow::Cow;
@@ -649,7 +648,7 @@ pub fn connect<T: Into<Message<ClientMsg>> + 'static>(
     let inner = TcpStream::connect(&addr)
         .map_err(|e| e.into())
         .and_then(|tcp| {
-            let transport = tcp.framed(ClientCodec);
+            let transport = ClientCodec.framed(tcp);
             handshake(transport, address, login, passcode)
         })
         .and_then(|tcp| {

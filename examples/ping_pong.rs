@@ -5,7 +5,7 @@ extern crate tokio_stomp;
 use std::time::Duration;
 
 use tokio_stomp::*;
-use tokio::executor::current_thread::{run, spawn};
+use tokio::runtime::current_thread::block_on_all;
 use futures::future::ok;
 use futures::prelude::*;
 
@@ -43,7 +43,7 @@ fn main() {
             ok(())
         }).map_err(|e| eprintln!("{}", e));
 
-        run(|_| spawn(fut1));
+        block_on_all(fut1).unwrap();
     });
 
     let (fut2, tx2) = tokio_stomp::connect("127.0.0.1:61613".into(), None, None).unwrap();
@@ -67,5 +67,5 @@ fn main() {
         ok(())
     }).map_err(|e| eprintln!("{}", e));
 
-    run(|_| spawn(fut2));
+    block_on_all(fut2).unwrap();
 }
