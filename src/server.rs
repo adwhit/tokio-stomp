@@ -30,45 +30,43 @@ struct ServerState {
 fn server_state_handler(
     rx_clientmsg: RxC,
     rx_tcpsink: u8,
-) -> Box<Future<Item = (), Error = failure::Error>> {
+) -> impl Future<Item = (), Error = failure::Error> {
     use ClientMsg::*;
     //state.borrow_mut().connections.insert(addr, txs).unwrap();
     let mut state = ServerState::default();
-    Box::new(
-        rx_clientmsg
-            .for_each(move |msg| {
-                match msg.content {
-                    Send {
-                        destination, body, ..
-                    } => route_message(&state, destination, body),
-                    Subscribe {
-                        destination,
-                        id,
-                        ack,
-                    } => {
-                        // add subscription
-                        unimplemented!()
-                    }
-                    Unsubscribe { id } => {
-                        // remove subscription
-                        unimplemented!()
-                    }
-                    Disconnect { receipt } => {
-                        // remove subscription
-                        unimplemented!()
-                    }
-                    _ => unimplemented!(),
+    rx_clientmsg
+        .for_each(move |msg| {
+            match msg.content {
+                Send {
+                    destination, body, ..
+                } => route_message(&state, destination, body),
+                Subscribe {
+                    destination,
+                    id,
+                    ack,
+                } => {
+                    // add subscription
+                    unimplemented!()
                 }
-            })
-            .map_err(|()| format_err!("")),
-    )
+                Unsubscribe { id } => {
+                    // remove subscription
+                    unimplemented!()
+                }
+                Disconnect { receipt } => {
+                    // remove subscription
+                    unimplemented!()
+                }
+                _ => unimplemented!(),
+            }
+        })
+        .map_err(|()| format_err!(""))
 }
 
 fn route_message(
     state: &ServerState,
     destination: String,
     body: Option<Vec<u8>>,
-) -> Box<Future<Item = (), Error = ()>> {
+) -> impl Future<Item = (), Error = ()> {
     let servermsg = Rc::new(Message {
         content: ServerMsg::Message {
             destination,
@@ -87,11 +85,9 @@ fn route_message(
                 .map_err(|_| format_err!("Send failed"))
         })
         .collect();
-    Box::new(
-        join_all(results)
-            .map(|_| ())
-            .map_err(|e| eprintln!("{}", e)),
-    )
+    join_all(results)
+        .map(|_| ())
+        .map_err(|e| eprintln!("{}", e))
 }
 
 impl Server {

@@ -21,10 +21,13 @@ pub fn connect<T: Into<Message<ClientMsg>> + 'static>(
     address: String,
     login: Option<String>,
     passcode: Option<String>,
-) -> Result<(StompStream, mpsc::UnboundedSender<T>)> {
+) -> Result<(
+    impl Stream<Item = Message<ServerMsg>, Error = failure::Error>,
+    mpsc::UnboundedSender<T>,
+)> {
     let (tx, rx) = mpsc::unbounded::<T>();
     let addr = address.as_str().to_socket_addrs().unwrap().next().unwrap();
-    let inner = TcpStream::connect(&addr)
+    let stream = TcpStream::connect(&addr)
         .map_err(|e| e.into())
         .and_then(|tcp| {
             let transport = ClientCodec.framed(tcp);
@@ -43,26 +46,7 @@ pub fn connect<T: Into<Message<ClientMsg>> + 'static>(
             fok(stream)
         })
         .flatten_stream();
-    Ok((
-        StompStream {
-            inner: Box::new(inner),
-        },
-        tx,
-    ))
-}
-
-/// Structure representing a stream of STOMP messages
-pub struct StompStream {
-    inner: Box<Stream<Item = Message<ServerMsg>, Error = failure::Error>>,
-}
-
-impl Stream for StompStream {
-    type Item = Message<ServerMsg>;
-    type Error = failure::Error;
-
-    fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
-        self.inner.poll()
-    }
+    Ok((stream, tx))
 }
 
 fn client_handshake(
@@ -70,7 +54,7 @@ fn client_handshake(
     host: String,
     login: Option<String>,
     passcode: Option<String>,
-) -> Box<Future<Item = ClientTransport, Error = failure::Error>> {
+) -> impl Future<Item = ClientTransport, Error = failure::Error> {
     let connect = Message {
         content: ClientMsg::Connect {
             accept_version: "1.1,1.2".into(),
@@ -82,7 +66,7 @@ fn client_handshake(
         extra_headers: vec![],
     };
 
-    let fut = transport
+    transport
         .send(connect)
         .and_then(|transport| transport.into_future().map_err(|(e, _)| e.into()))
         .and_then(|(msg, stream)| {
@@ -91,8 +75,7 @@ fn client_handshake(
             } else {
                 ferr(format_err!("unexpected reply"))
             }
-        });
-    Box::new(fut)
+        })
 }
 
 struct ClientCodec;
