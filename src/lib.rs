@@ -9,20 +9,20 @@ extern crate nom;
 extern crate tokio;
 
 use bytes::{BufMut, BytesMut};
+use futures::future::{err as ferr, join_all, ok as fok};
 use futures::prelude::*;
 use futures::sync::mpsc;
-use futures::future::{err as ferr, join_all, ok as fok};
-use tokio::net::{TcpListener, TcpStream};
-use tokio::executor::current_thread::spawn;
 use tokio::codec::{Decoder, Encoder, Framed};
-use tokio::io::WriteHalf;
+use tokio::executor::current_thread::spawn;
 use tokio::io::AsyncRead;
+use tokio::io::WriteHalf;
+use tokio::net::{TcpListener, TcpStream};
 
-use std::net::{SocketAddr, ToSocketAddrs};
 use std::borrow::Cow;
-use std::collections::HashMap;
-use std::rc::Rc;
 use std::cell::RefCell;
+use std::collections::HashMap;
+use std::net::{SocketAddr, ToSocketAddrs};
+use std::rc::Rc;
 
 type Result<T> = std::result::Result<T, failure::Error>;
 type ClientTransport = Framed<TcpStream, ClientCodec>;
@@ -82,11 +82,13 @@ impl<'a> Frame<'a> {
                 b => buffer.put(b),
             }
         }
-        let requires =
-            self.command.len() + self.body.map(|b| b.len() + 20).unwrap_or(0)
-                + self.headers
-                    .iter()
-                    .fold(0, |acc, &(ref k, ref v)| acc + k.len() + v.len()) + 30;
+        let requires = self.command.len()
+            + self.body.map(|b| b.len() + 20).unwrap_or(0)
+            + self
+                .headers
+                .iter()
+                .fold(0, |acc, &(ref k, ref v)| acc + k.len() + v.len())
+            + 30;
         if buffer.remaining_mut() < requires {
             buffer.reserve(requires);
         }
@@ -150,17 +152,21 @@ fn is_empty_slice(s: &[u8]) -> Option<&[u8]> {
 named!(
     parse_frame<Frame>,
     do_parse!(
-        many0!(eol) >> command: map!(take_until_and_consume!("\n"), strip_cr)
-            >> headers: many0!(parse_header) >> eol
-            >> body:
-                switch!(value!(get_content_length(&*headers)),
-            Some(v) => map!(take!(v), Some) |
-            None => map!(take_until!("\x00"), is_empty_slice)
-        ) >> tag!("\x00") >> many0!(complete!(eol)) >> (Frame {
-            command,
-            headers,
-            body,
-        })
+        many0!(eol)
+            >> command: map!(take_until_and_consume!("\n"), strip_cr)
+            >> headers: many0!(parse_header)
+            >> eol
+            >> body: switch!(value!(get_content_length(&*headers)),
+                Some(v) => map!(take!(v), Some) |
+                None => map!(take_until!("\x00"), is_empty_slice)
+            )
+            >> tag!("\x00")
+            >> many0!(complete!(eol))
+            >> (Frame {
+                command,
+                headers,
+                body,
+            })
     )
 );
 
@@ -189,9 +195,9 @@ fn expect_header<'a>(headers: &'a [(&'a [u8], Cow<'a, [u8]>)], key: &'a str) -> 
 impl<'a> Frame<'a> {
     #[allow(dead_code)]
     fn to_client_msg(&'a self) -> Result<Message<ClientMsg>> {
-        use ClientMsg::*;
         use expect_header as eh;
         use fetch_header as fh;
+        use ClientMsg::*;
         let h = &self.headers;
         let expect_keys: &[&[u8]];
         let content = match self.command {
@@ -282,7 +288,8 @@ impl<'a> Frame<'a> {
             }
             other => bail!("Frame not recognized: {:?}", String::from_utf8_lossy(other)),
         };
-        let extra_headers = h.iter()
+        let extra_headers = h
+            .iter()
             .filter_map(|&(k, ref v)| {
                 if !expect_keys.contains(&k) {
                     Some((k.to_vec(), (&*v).to_vec()))
@@ -298,9 +305,9 @@ impl<'a> Frame<'a> {
     }
 
     fn to_server_msg(&'a self) -> Result<Message<ServerMsg>> {
-        use ServerMsg::{Connected, Error, Message as Msg, Receipt};
         use expect_header as eh;
         use fetch_header as fh;
+        use ServerMsg::{Connected, Error, Message as Msg, Receipt};
         let h = &self.headers;
         let expect_keys: &[&[u8]];
         let content = match self.command {
@@ -337,7 +344,8 @@ impl<'a> Frame<'a> {
             }
             other => bail!("Frame not recognized: {:?}", String::from_utf8_lossy(other)),
         };
-        let extra_headers = h.iter()
+        let extra_headers = h
+            .iter()
             .filter_map(|&(k, ref v)| {
                 if !expect_keys.contains(&k) {
                     Some((k.to_vec(), (&*v).to_vec()))
@@ -679,10 +687,12 @@ pub fn connect<T: Into<Message<ClientMsg>> + 'static>(
         })
         .and_then(|tcp| {
             let (sink, stream) = tcp.split();
-            let fsink = sink.send_all(
-                rx.map(|m| m.into())
-                    .map_err(|()| format_err!("Channel closed")),
-            ).map(|_| println!("Sink closed"))
+            let fsink = sink
+                .send_all(
+                    rx.map(|m| m.into())
+                        .map_err(|()| format_err!("Channel closed")),
+                )
+                .map(|_| println!("Sink closed"))
                 .map_err(|e| eprintln!("{}", e));
             spawn(fsink);
             fok(stream)
@@ -756,30 +766,33 @@ fn state_handler(
     use ClientMsg::*;
     //state.borrow_mut().connections.insert(addr, txs).unwrap();
     let mut state = ServerState::default();
-    Box::new(rx.for_each(move |msg| {
-        match msg.content {
-            Send {
-                destination, body, ..
-            } => route_message(&state, destination, body),
-            Subscribe {
-                destination,
-                id,
-                ack,
-            } => {
-                // add subscription
-                unimplemented!()
+    Box::new(
+        rx.for_each(move |msg| {
+            match msg.content {
+                Send {
+                    destination, body, ..
+                } => route_message(&state, destination, body),
+                Subscribe {
+                    destination,
+                    id,
+                    ack,
+                } => {
+                    // add subscription
+                    unimplemented!()
+                }
+                Unsubscribe { id } => {
+                    // remove subscription
+                    unimplemented!()
+                }
+                Disconnect { receipt } => {
+                    // remove subscription
+                    unimplemented!()
+                }
+                _ => unimplemented!(),
             }
-            Unsubscribe { id } => {
-                // remove subscription
-                unimplemented!()
-            }
-            Disconnect { receipt } => {
-                // remove subscription
-                unimplemented!()
-            }
-            _ => unimplemented!(),
-        }
-    }).map_err(|()| format_err!("")))
+        })
+        .map_err(|()| format_err!("")),
+    )
 }
 
 fn route_message(
@@ -828,29 +841,31 @@ impl Server {
             let transport = conn.framed(ServerCodec);
 
             // do the handshake here, then send to the state handler
-            let do_handshake = transport.into_future().and_then(|(msg, transport)| {
-                // handshake
-                if let Some(ClientMsg::Connect { .. }) = msg.map(|m| m.content) {
-                    let reply = Message {
-                        extra_headers: vec![],
-                        content: Connected {
-                            version: "1.2".into(),
-                            session: None,
-                            server: None,
-                            heartbeat: None,
-                        },
-                    };
-                    transport.send(reply)
-                } else {
-                    panic!("Bad handshake")
-                }
-            }).and_then(|transport| {
-                // Send to state handler
-                tx_transport(transport)
-            });
+            let do_handshake = transport
+                .into_future()
+                .and_then(|(msg, transport)| {
+                    // handshake
+                    if let Some(ClientMsg::Connect { .. }) = msg.map(|m| m.content) {
+                        let reply = Message {
+                            extra_headers: vec![],
+                            content: Connected {
+                                version: "1.2".into(),
+                                session: None,
+                                server: None,
+                                heartbeat: None,
+                            },
+                        };
+                        transport.send(reply)
+                    } else {
+                        panic!("Bad handshake")
+                    }
+                })
+                .and_then(|transport| {
+                    // Send to state handler
+                    tx_transport(transport)
+                });
 
             spawn(do_handshake.map_err(|e| eprintln!("{}", e)));
-
 
             // broadcast channel
             // need to get txs into state
@@ -907,7 +922,7 @@ destination:datafeeds.here.co.uk
 message-id:12345
 subscription:some-id
 "
-            .to_vec();
+        .to_vec();
         let body = "this body contains \x00 nulls \n and \r\n newlines \x00 OK?";
         let rest = format!("content-length:{}\n\n{}\x00", body.len(), body);
         data.extend_from_slice(rest.as_bytes());

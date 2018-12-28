@@ -4,10 +4,10 @@ extern crate tokio_stomp;
 
 use std::time::Duration;
 
-use tokio_stomp::*;
-use tokio::runtime::current_thread::block_on_all;
 use futures::future::ok;
 use futures::prelude::*;
+use tokio::runtime::current_thread::block_on_all;
+use tokio_stomp::*;
 
 // The example connects to a local server, then sends the following messages -
 // subscribe to a destination, send a message to the destination, unsubscribe and disconnect
@@ -24,7 +24,8 @@ fn main() {
             destination: "rusty".into(),
             id: "myid".into(),
             ack: None,
-        }).unwrap();
+        })
+        .unwrap();
         println!("Subscribe sent");
 
         std::thread::sleep(Duration::from_secs(1));
@@ -32,7 +33,8 @@ fn main() {
             destination: "rusty".into(),
             transaction: None,
             body: Some(b"Hello there rustaceans!".to_vec()),
-        }).unwrap();
+        })
+        .unwrap();
         println!("Message sent");
 
         std::thread::sleep(Duration::from_secs(1));
@@ -51,17 +53,19 @@ fn main() {
     // Listen from the main thread. Once the Disconnect message is sent from
     // the sender thread, the server will disconnect the client and the future
     // will resolve, ending the program
-    let fut = fut.for_each(|item| {
-        if let ServerMsg::Message { body, .. } = item.content {
-            println!(
-                "Message received: {:?}",
-                String::from_utf8_lossy(&body.unwrap())
-            );
-        } else {
-            println!("{:?}", item);
-        }
-        ok(())
-    }).map_err(|e| eprintln!("{}", e));
+    let fut = fut
+        .for_each(|item| {
+            if let ServerMsg::Message { body, .. } = item.content {
+                println!(
+                    "Message received: {:?}",
+                    String::from_utf8_lossy(&body.unwrap())
+                );
+            } else {
+                println!("{:?}", item);
+            }
+            ok(())
+        })
+        .map_err(|e| eprintln!("{}", e));
 
     block_on_all(fut).unwrap();
 }
