@@ -15,7 +15,7 @@ use tokio_stomp::*;
 // it ends up printing it's own message.
 
 fn main() {
-    let (fut, tx) = tokio_stomp::connect("127.0.0.1:61613".into(), None, None).unwrap();
+    let (fut, tx) = tokio_stomp::client::connect("127.0.0.1:61613".into(), None, None).unwrap();
 
     // Sender thread
     std::thread::spawn(move || {

@@ -15,7 +15,7 @@ use tokio_stomp::*;
 
 fn main() {
     std::thread::spawn(|| {
-        let (fut1, tx1) = tokio_stomp::connect("127.0.0.1:61613".into(), None, None).unwrap();
+        let (fut1, tx1) = tokio_stomp::client::connect("127.0.0.1:61613".into(), None, None).unwrap();
         tx1.unbounded_send(ClientMsg::Subscribe {
             destination: "ping".into(),
             id: "myid".into(),
@@ -51,7 +51,7 @@ fn main() {
         block_on_all(fut1).unwrap();
     });
 
-    let (fut2, tx2) = tokio_stomp::connect("127.0.0.1:61613".into(), None, None).unwrap();
+    let (fut2, tx2) = tokio_stomp::client::connect("127.0.0.1:61613".into(), None, None).unwrap();
 
     tx2.unbounded_send(ClientMsg::Subscribe {
         destination: "pong".into(),
