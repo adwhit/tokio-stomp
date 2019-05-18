@@ -1,15 +1,11 @@
 //! tokio-stomp - A library for asynchronous streaming of STOMP messages
 
-extern crate bytes;
 #[macro_use]
 extern crate failure;
-extern crate futures;
 #[macro_use]
 extern crate nom;
-extern crate tokio;
 
 use frame::Frame;
-use std::borrow::Cow;
 
 pub mod client;
 mod frame;

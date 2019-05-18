@@ -11,8 +11,8 @@ use tokio::net::TcpStream;
 
 type ClientTransport = Framed<TcpStream, ClientCodec>;
 
-use frame;
-use {ClientMsg, Message, Result, ServerMsg};
+use crate::frame;
+use crate::{ClientMsg, Message, Result, ServerMsg};
 
 /// Connect to a STOMP server via TCP, including the connection handshake.
 /// If successful, returns a tuple of a message stream and a sender,

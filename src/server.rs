@@ -9,7 +9,7 @@ use futures::prelude::*;
 use futures::sync::mpsc;
 use tokio::codec::{Decoder, Encoder};
 
-use {ClientMsg, Message, Result, ServerMsg};
+use crate::{ClientMsg, Message, Result, ServerMsg};
 
 type TxS = mpsc::UnboundedSender<Rc<Message<ServerMsg>>>;
 type RxS = mpsc::UnboundedReceiver<Rc<Message<ServerMsg>>>;

@@ -1,7 +1,7 @@
 use bytes::{BufMut, BytesMut};
 use std::borrow::Cow;
 
-use {AckMode, ClientMsg, Message, Result, ServerMsg};
+use crate::{AckMode, ClientMsg, Message, Result, ServerMsg};
 
 #[derive(Debug)]
 pub(crate) struct Frame<'a> {
