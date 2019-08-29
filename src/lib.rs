@@ -9,7 +9,6 @@ use frame::Frame;
 
 pub mod client;
 mod frame;
-// pub mod server;
 
 pub(crate) type Result<T> = std::result::Result<T, failure::Error>;
 
