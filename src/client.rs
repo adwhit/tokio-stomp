@@ -1,13 +1,15 @@
 use std::net::ToSocketAddrs;
 
 use bytes::BytesMut;
-use futures::future::{err as ferr, ok as fok};
+use futures::channel::mpsc;
+use futures::future::TryFutureExt;
 use futures::prelude::*;
-use futures::sync::mpsc;
+use futures::sink::SinkExt;
+use futures::stream::TryStreamExt;
 
 use tokio::codec::{Decoder, Encoder, Framed};
-use tokio::executor::current_thread::spawn;
 use tokio::net::TcpStream;
+use tokio::runtime::current_thread::spawn;
 
 type ClientTransport = Framed<TcpStream, ClientCodec>;
 
@@ -17,44 +19,42 @@ use crate::{ClientMsg, Message, Result, ServerMsg};
 /// Connect to a STOMP server via TCP, including the connection handshake.
 /// If successful, returns a tuple of a message stream and a sender,
 /// which may be used to receive and send messages respectively.
-pub fn connect<T: Into<Message<ClientMsg>> + 'static>(
+pub async fn connect<T: Into<Message<ClientMsg>> + 'static>(
     address: String,
     login: Option<String>,
     passcode: Option<String>,
 ) -> Result<(
-    impl Stream<Item = Message<ServerMsg>, Error = failure::Error>,
+    impl Stream<Item = Result<Message<ServerMsg>>>,
     mpsc::UnboundedSender<T>,
 )> {
     let (tx, rx) = mpsc::unbounded::<T>();
     let addr = address.as_str().to_socket_addrs().unwrap().next().unwrap();
-    let stream = TcpStream::connect(&addr)
-        .map_err(|e| e.into())
-        .and_then(|tcp| {
-            let transport = ClientCodec.framed(tcp);
-            client_handshake(transport, address, login, passcode)
-        })
-        .and_then(|tcp| {
-            let (sink, stream) = tcp.split();
-            let fsink = sink
-                .send_all(
-                    rx.map(|m| m.into())
-                        .map_err(|()| format_err!("Channel closed")),
-                )
-                .map(|_| println!("Sink closed"))
-                .map_err(|e| eprintln!("{}", e));
-            spawn(fsink);
-            fok(stream)
-        })
-        .flatten_stream();
+    let tcp = TcpStream::connect(&addr).await?;
+    let mut transport = ClientCodec.framed(tcp);
+    client_handshake(&mut transport, address, login, passcode).await?;
+    let (sink, stream) = transport.split();
+
+    let fut_sink = sink
+        .send_all(
+            rx.map_ok(|m| m.into())
+                .map_err(|()| format_err!("Channel closed")),
+        )
+        .map(|res| match res {
+            Ok(_) => println!("Sink closed"),
+            Err(e) => eprintln!("{}", e),
+        });
+
+    spawn(fut_sink);
+
     Ok((stream, tx))
 }
 
-fn client_handshake(
-    transport: ClientTransport,
+async fn client_handshake(
+    transport: &mut ClientTransport,
     host: String,
     login: Option<String>,
     passcode: Option<String>,
-) -> impl Future<Item = ClientTransport, Error = failure::Error> {
+) -> Result<()> {
     let connect = Message {
         content: ClientMsg::Connect {
             accept_version: "1.1,1.2".into(),
@@ -65,17 +65,15 @@ fn client_handshake(
         },
         extra_headers: vec![],
     };
-
-    transport
-        .send(connect)
-        .and_then(|transport| transport.into_future().map_err(|(e, _)| e.into()))
-        .and_then(|(msg, stream)| {
-            if let Some(ServerMsg::Connected { .. }) = msg.map(|m| m.content) {
-                fok(stream)
-            } else {
-                ferr(format_err!("unexpected reply"))
-            }
-        })
+    // Send the message
+    transport.send(connect).await?;
+    // Receive reply
+    let msg = transport.next().await.transpose()?;
+    if let Some(ServerMsg::Connected { .. }) = msg.map(|m| m.content) {
+        Ok(())
+    } else {
+        Err(format_err!("unexpected reply"))
+    }
 }
 
 struct ClientCodec;

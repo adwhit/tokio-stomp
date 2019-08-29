@@ -9,7 +9,7 @@ use frame::Frame;
 
 pub mod client;
 mod frame;
-pub mod server;
+// pub mod server;
 
 pub(crate) type Result<T> = std::result::Result<T, failure::Error>;
 
@@ -26,7 +26,7 @@ pub struct Message<T> {
 /// See the [Spec](https://stomp.github.io/stomp-specification-1.2.html) for more information
 #[derive(Debug, Clone)]
 pub enum ServerMsg {
-    #[doc(hidden)]
+    #[doc(hidden)] // The user shouldn't need to know about this one
     Connected {
         version: String,
         session: Option<String>,
@@ -66,7 +66,7 @@ impl Message<ServerMsg> {
 /// See the [Spec](https://stomp.github.io/stomp-specification-1.2.html) for more information
 #[derive(Debug, Clone)]
 pub enum ClientMsg {
-    #[doc(hidden)]
+    #[doc(hidden)] // The user shouldn't need to know about this one
     Connect {
         accept_version: String,
         host: String,

@@ -11,8 +11,8 @@ readme = "README.md"
 edition = "2018"
 
 [dependencies]
-nom = "4.2.3"
+nom = "4"
 failure = "0.1.5"
 bytes = "0.4.12"
-futures = "0.1"
-tokio = "0.1.20"
+futures-preview = "0.3.0-alpha.18"
+tokio = "0.2.0-alpha.3"
