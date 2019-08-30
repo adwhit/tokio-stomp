@@ -50,10 +50,10 @@ async fn client_handshake(
     transport.send(connect).await?;
     // Receive reply
     let msg = transport.next().await.transpose()?;
-    if let Some(FromServer::Connected { .. }) = msg.map(|m| m.content) {
+    if let Some(FromServer::Connected { .. }) = msg.as_ref().map(|m| &m.content) {
         Ok(())
     } else {
-        Err(failure::format_err!("unexpected reply"))
+        Err(failure::format_err!("unexpected reply: {:?}", msg))
     }
 }
 
