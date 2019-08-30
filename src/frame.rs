@@ -1,7 +1,9 @@
 use bytes::{BufMut, BytesMut};
+use failure::{bail, format_err};
+
 use std::borrow::Cow;
 
-use crate::{AckMode, ClientMsg, Message, Result, ServerMsg};
+use crate::{AckMode, FromServer, Message, Result, ToServer};
 
 #[derive(Debug)]
 pub(crate) struct Frame<'a> {
@@ -166,10 +168,10 @@ fn expect_header<'a>(headers: &'a [(&'a [u8], Cow<'a, [u8]>)], key: &'a str) -> 
 
 impl<'a> Frame<'a> {
     #[allow(dead_code)]
-    pub(crate) fn to_client_msg(&'a self) -> Result<Message<ClientMsg>> {
+    pub(crate) fn to_client_msg(&'a self) -> Result<Message<ToServer>> {
         use self::expect_header as eh;
         use self::fetch_header as fh;
-        use ClientMsg::*;
+        use ToServer::*;
         let h = &self.headers;
         let expect_keys: &[&[u8]];
         let content = match self.command {
@@ -276,10 +278,10 @@ impl<'a> Frame<'a> {
         })
     }
 
-    pub(crate) fn to_server_msg(&'a self) -> Result<Message<ServerMsg>> {
+    pub(crate) fn to_server_msg(&'a self) -> Result<Message<FromServer>> {
         use self::expect_header as eh;
         use self::fetch_header as fh;
-        use ServerMsg::{Connected, Error, Message as Msg, Receipt};
+        use FromServer::{Connected, Error, Message as Msg, Receipt};
         let h = &self.headers;
         let expect_keys: &[&[u8]];
         let content = match self.command {
@@ -348,11 +350,11 @@ fn parse_heartbeat(hb: &str) -> Result<(u32, u32)> {
     Ok((left.parse()?, right.parse()?))
 }
 
-impl ClientMsg {
+impl ToServer {
     pub(crate) fn to_frame<'a>(&'a self) -> Frame<'a> {
         use self::opt_str_to_bytes as sb;
-        use ClientMsg::*;
         use Cow::*;
+        use ToServer::*;
         match *self {
             Connect {
                 ref accept_version,
@@ -507,7 +509,7 @@ subscription:some-id
         assert_eq!(fh, headers_expect);
         assert_eq!(frame.body, Some(body.as_bytes()));
         frame.to_server_msg().unwrap();
-        // TODO to_frame for ServerMsg
+        // TODO to_frame for FromServer
         // let roundtrip = stomp.to_frame().serialize();
         // assert_eq!(roundtrip, data);
     }

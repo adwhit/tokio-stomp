@@ -15,20 +15,12 @@ use tokio_stomp::*;
 // `docker run -p 61613:61613 rmohr/activemq:latest`
 
 async fn client(listens: &str, sends: &str, msg: &[u8]) -> Result<(), failure::Error> {
-    let mut conn = tokio_stomp::client::connect("127.0.0.1:61613".into(), None, None).await?;
-    conn.send(
-        ClientMsg::Subscribe {
-            destination: listens.into(),
-            id: "myid".into(),
-            ack: None,
-        }
-        .into(),
-    )
-    .await?;
+    let mut conn = tokio_stomp::client::connect("127.0.0.1:61613", None, None).await?;
+    conn.send(client::subscribe(listens, "myid")).await?;
 
     loop {
         conn.send(
-            ClientMsg::Send {
+            ToServer::Send {
                 destination: sends.into(),
                 transaction: None,
                 body: Some(msg.to_vec()),
@@ -37,7 +29,7 @@ async fn client(listens: &str, sends: &str, msg: &[u8]) -> Result<(), failure::E
         )
         .await?;
         let msg = conn.next().await.transpose()?;
-        if let Some(ServerMsg::Message { body, .. }) = msg.as_ref().map(|m| &m.content) {
+        if let Some(FromServer::Message { body, .. }) = msg.as_ref().map(|m| &m.content) {
             println!("{}", String::from_utf8_lossy(&body.as_ref().unwrap()));
         } else {
             failure::bail!("Unexpected: {:?}", msg)

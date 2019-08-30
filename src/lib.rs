@@ -1,10 +1,9 @@
 //! tokio-stomp - A library for asynchronous streaming of STOMP messages
 
 #[macro_use]
-extern crate failure;
-#[macro_use]
 extern crate nom;
 
+use custom_debug_derive::CustomDebug;
 use frame::Frame;
 
 pub mod client;
@@ -21,10 +20,18 @@ pub struct Message<T> {
     pub extra_headers: Vec<(Vec<u8>, Vec<u8>)>,
 }
 
+fn pretty_bytes(b: &Option<Vec<u8>>, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+    if let Some(v) = b {
+        write!(f, "{}", String::from_utf8_lossy(v))
+    } else {
+        write!(f, "None")
+    }
+}
+
 /// A STOMP message sent from the server
 /// See the [Spec](https://stomp.github.io/stomp-specification-1.2.html) for more information
-#[derive(Debug, Clone)]
-pub enum ServerMsg {
+#[derive(CustomDebug, Clone)]
+pub enum FromServer {
     #[doc(hidden)] // The user shouldn't need to know about this one
     Connected {
         version: String,
@@ -37,6 +44,7 @@ pub enum ServerMsg {
         destination: String,
         message_id: String,
         subscription: String,
+        #[debug(with = "pretty_bytes")]
         body: Option<Vec<u8>>,
     },
     /// Sent from the server to the client once a server has successfully
@@ -45,18 +53,19 @@ pub enum ServerMsg {
     /// Something went wrong. After sending an Error, the server will close the connection
     Error {
         message: Option<String>,
+        #[debug(with = "pretty_bytes")]
         body: Option<Vec<u8>>,
     },
 }
 
 // TODO tidy this lot up with traits?
-impl Message<ServerMsg> {
+impl Message<FromServer> {
     // fn to_frame<'a>(&'a self) -> Frame<'a> {
     //     unimplemented!()
     // }
 
     // TODO make this undead
-    fn from_frame<'a>(frame: Frame<'a>) -> Result<Message<ServerMsg>> {
+    fn from_frame<'a>(frame: Frame<'a>) -> Result<Message<FromServer>> {
         frame.to_server_msg()
     }
 }
@@ -64,7 +73,7 @@ impl Message<ServerMsg> {
 /// A STOMP message sent by the client.
 /// See the [Spec](https://stomp.github.io/stomp-specification-1.2.html) for more information
 #[derive(Debug, Clone)]
-pub enum ClientMsg {
+pub enum ToServer {
     #[doc(hidden)] // The user shouldn't need to know about this one
     Connect {
         accept_version: String,
@@ -117,19 +126,19 @@ pub enum AckMode {
     ClientIndividual,
 }
 
-impl Message<ClientMsg> {
+impl Message<ToServer> {
     fn to_frame<'a>(&'a self) -> Frame<'a> {
         self.content.to_frame()
     }
 
     #[allow(dead_code)]
-    fn from_frame<'a>(frame: Frame<'a>) -> Result<Message<ClientMsg>> {
+    fn from_frame<'a>(frame: Frame<'a>) -> Result<Message<ToServer>> {
         frame.to_client_msg()
     }
 }
 
-impl From<ClientMsg> for Message<ClientMsg> {
-    fn from(content: ClientMsg) -> Message<ClientMsg> {
+impl From<ToServer> for Message<ToServer> {
+    fn from(content: ToServer) -> Message<ToServer> {
         Message {
             content,
             extra_headers: vec![],

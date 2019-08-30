@@ -18,28 +18,20 @@ use tokio_stomp::*;
 
 #[tokio::main]
 async fn main() -> Result<(), failure::Error> {
-    let conn = tokio_stomp::client::connect("127.0.0.1:61613".into(), None, None).await?;
+    let conn = client::connect("127.0.0.1:61613", None, None).await?;
 
     tokio::timer::delay(Instant::now() + Duration::from_millis(200)).await;
 
     let (mut sink, stream) = conn.split();
 
     let fut1 = async move {
-        sink.send(
-            ClientMsg::Subscribe {
-                destination: "rusty".into(),
-                id: "myid".into(),
-                ack: None,
-            }
-            .into(),
-        )
-        .await?;
+        sink.send(client::subscribe("rusty", "myid")).await?;
         println!("Subscribe sent");
 
         tokio::timer::delay(Instant::now() + Duration::from_millis(200)).await;
 
         sink.send(
-            ClientMsg::Send {
+            ToServer::Send {
                 destination: "rusty".into(),
                 transaction: None,
                 body: Some(b"Hello there rustaceans!".to_vec()),
@@ -51,14 +43,14 @@ async fn main() -> Result<(), failure::Error> {
 
         tokio::timer::delay(Instant::now() + Duration::from_millis(200)).await;
 
-        sink.send(ClientMsg::Unsubscribe { id: "myid".into() }.into())
+        sink.send(ToServer::Unsubscribe { id: "myid".into() }.into())
             .await?;
         println!("Unsubscribe sent");
 
         tokio::timer::delay(Instant::now() + Duration::from_millis(200)).await;
 
         tokio::timer::delay(Instant::now() + Duration::from_secs(1)).await;
-        sink.send(ClientMsg::Disconnect { receipt: None }.into())
+        sink.send(ToServer::Disconnect { receipt: None }.into())
             .await?;
         println!("Disconnect sent");
 
@@ -69,7 +61,7 @@ async fn main() -> Result<(), failure::Error> {
     // the sender thread, the server will disconnect the client and the future
     // will resolve, ending the program
     let fut2 = stream.try_for_each(|item| {
-        if let ServerMsg::Message { body, .. } = item.content {
+        if let FromServer::Message { body, .. } = item.content {
             println!(
                 "Message received: {:?}",
                 String::from_utf8_lossy(&body.unwrap())

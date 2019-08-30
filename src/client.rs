@@ -10,18 +10,19 @@ use tokio::net::TcpStream;
 type ClientTransport = Framed<TcpStream, ClientCodec>;
 
 use crate::frame;
-use crate::{ClientMsg, Message, Result, ServerMsg};
+use crate::{FromServer, Message, Result, ToServer};
 
 /// Connect to a STOMP server via TCP, including the connection handshake.
 /// If successful, returns a tuple of a message stream and a sender,
 /// which may be used to receive and send messages respectively.
 pub async fn connect(
-    address: String,
+    address: impl Into<String>,
     login: Option<String>,
     passcode: Option<String>,
 ) -> Result<
-    impl Stream<Item = Result<Message<ServerMsg>>> + Sink<Message<ClientMsg>, Error = failure::Error>,
+    impl Stream<Item = Result<Message<FromServer>>> + Sink<Message<ToServer>, Error = failure::Error>,
 > {
+    let address = address.into();
     let addr = address.as_str().to_socket_addrs().unwrap().next().unwrap();
     let tcp = TcpStream::connect(&addr).await?;
     let mut transport = ClientCodec.framed(tcp);
@@ -36,7 +37,7 @@ async fn client_handshake(
     passcode: Option<String>,
 ) -> Result<()> {
     let connect = Message {
-        content: ClientMsg::Connect {
+        content: ToServer::Connect {
             accept_version: "1.2".into(),
             host: host,
             login: login,
@@ -49,27 +50,37 @@ async fn client_handshake(
     transport.send(connect).await?;
     // Receive reply
     let msg = transport.next().await.transpose()?;
-    if let Some(ServerMsg::Connected { .. }) = msg.map(|m| m.content) {
+    if let Some(FromServer::Connected { .. }) = msg.map(|m| m.content) {
         Ok(())
     } else {
-        Err(format_err!("unexpected reply"))
+        Err(failure::format_err!("unexpected reply"))
     }
+}
+
+/// Convenience function to build a Subscribe message
+pub fn subscribe(dest: impl Into<String>, id: impl Into<String>) -> Message<ToServer> {
+    ToServer::Subscribe {
+        destination: dest.into(),
+        id: id.into(),
+        ack: None,
+    }
+    .into()
 }
 
 struct ClientCodec;
 
 impl Decoder for ClientCodec {
-    type Item = Message<ServerMsg>;
+    type Item = Message<FromServer>;
     type Error = failure::Error;
 
     fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>> {
         let (item, offset) = match frame::parse_frame(&src) {
             Ok((remain, frame)) => (
-                Message::<ServerMsg>::from_frame(frame),
+                Message::<FromServer>::from_frame(frame),
                 remain.as_ptr() as usize - src.as_ptr() as usize,
             ),
             Err(nom::Err::Incomplete(_)) => return Ok(None),
-            Err(e) => bail!("Parse failed: {:?}", e),
+            Err(e) => failure::bail!("Parse failed: {:?}", e),
         };
         src.split_to(offset);
         item.map(|v| Some(v))
@@ -77,7 +88,7 @@ impl Decoder for ClientCodec {
 }
 
 impl Encoder for ClientCodec {
-    type Item = Message<ClientMsg>;
+    type Item = Message<ToServer>;
     type Error = failure::Error;
 
     fn encode(&mut self, item: Self::Item, dst: &mut BytesMut) -> Result<()> {
