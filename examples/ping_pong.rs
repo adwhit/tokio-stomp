@@ -2,80 +2,55 @@ extern crate futures;
 extern crate tokio;
 extern crate tokio_stomp;
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-use futures::future::ok;
 use futures::prelude::*;
-use tokio::runtime::current_thread::block_on_all;
 use tokio_stomp::*;
 
-// This examples consists of two theads, each of which connects to a local server,
-// and then sends either PING or PONG messages to the other thread while listening
+// This examples consists of two futures, each of which connects to a local server,
+// and then sends either PING or PONG messages to the server while listening
 // for replies. This continues indefinitely (ctrl-c to exit)
 
-fn main() {
-    std::thread::spawn(|| {
-        let (fut1, tx1) =
-            tokio_stomp::client::connect("127.0.0.1:61613".into(), None, None).unwrap();
-        tx1.unbounded_send(ClientMsg::Subscribe {
-            destination: "ping".into(),
+// You can start a simple server with [coilmq](https://github.com/hozn/coilmq):
+// coilmq -b 0.0.0.0 -p 61613
+
+async fn client(listens: &str, sends: &str, msg: &[u8]) -> Result<(), failure::Error> {
+    let mut conn = tokio_stomp::client::connect("127.0.0.1:61613".into(), None, None).await?;
+    conn.send(
+        ClientMsg::Subscribe {
+            destination: listens.into(),
             id: "myid".into(),
             ack: None,
-        })
-        .unwrap();
+        }
+        .into(),
+    )
+    .await?;
 
-        tx1.unbounded_send(ClientMsg::Send {
-            destination: "pong".into(),
-            transaction: None,
-            body: Some(b"PONG!".to_vec()),
-        })
-        .unwrap();
-
-        std::thread::sleep(Duration::from_secs(1));
-
-        let fut1 = fut1
-            .for_each(move |item| {
-                if let ServerMsg::Message { body, .. } = item.content {
-                    println!("{}", String::from_utf8_lossy(&body.unwrap()));
-                }
-                tx1.unbounded_send(ClientMsg::Send {
-                    destination: "pong".into(),
-                    transaction: None,
-                    body: Some(b"PONG!".to_vec()),
-                })
-                .unwrap();
-                std::thread::sleep(Duration::from_secs(1));
-                ok(())
-            })
-            .map_err(|e| eprintln!("{}", e));
-
-        block_on_all(fut1).unwrap();
-    });
-
-    let (fut2, tx2) = tokio_stomp::client::connect("127.0.0.1:61613".into(), None, None).unwrap();
-
-    tx2.unbounded_send(ClientMsg::Subscribe {
-        destination: "pong".into(),
-        id: "myid".into(),
-        ack: None,
-    })
-    .unwrap();
-
-    let fut2 = fut2
-        .for_each(move |item| {
-            if let ServerMsg::Message { body, .. } = item.content {
-                println!("{}", String::from_utf8_lossy(&body.unwrap()));
-            }
-            tx2.unbounded_send(ClientMsg::Send {
-                destination: "ping".into(),
+    loop {
+        conn.send(
+            ClientMsg::Send {
+                destination: sends.into(),
                 transaction: None,
-                body: Some(b"PING!".to_vec()),
-            })
-            .unwrap();
-            std::thread::sleep(Duration::from_secs(1));
-            ok(())
-        })
-        .map_err(|e| eprintln!("{}", e));
+                body: Some(msg.to_vec()),
+            }
+            .into(),
+        )
+        .await?;
+        let msg = conn.next().await.transpose()?;
+        if let Some(ServerMsg::Message { body, .. }) = msg.as_ref().map(|m| &m.content) {
+            println!("{}", String::from_utf8_lossy(&body.as_ref().unwrap()));
+        } else {
+            failure::bail!("Unexpected: {:?}", msg)
+        }
+        tokio::timer::delay(Instant::now() + Duration::from_secs(1)).await;
+    }
+}
 
-    block_on_all(fut2).unwrap();
+#[tokio::main]
+async fn main() -> Result<(), failure::Error> {
+    let fut1 = Box::pin(client("ping", "pong", b"PONG!"));
+    let fut2 = Box::pin(client("pong", "ping", b"PING!"));
+
+    let (res, _) = futures::future::select(fut1, fut2).await.factor_first();
+    res
 }
