@@ -161,7 +161,7 @@ fn fetch_header<'a>(headers: &'a [(&'a [u8], Cow<'a, [u8]>)], key: &'a str) -> O
 }
 
 fn expect_header<'a>(headers: &'a [(&'a [u8], Cow<'a, [u8]>)], key: &'a str) -> Result<String> {
-    fetch_header(headers, key).ok_or_else(|| format_err!("Expected header {} missing", key))
+    fetch_header(headers, key).ok_or_else(|| format_err!("Expected header '{}' missing", key))
 }
 
 impl<'a> Frame<'a> {
@@ -173,7 +173,7 @@ impl<'a> Frame<'a> {
         let h = &self.headers;
         let expect_keys: &[&[u8]];
         let content = match self.command {
-            b"STOMP" | b"CONNECT" => {
+            b"STOMP" | b"CONNECT" | b"stomp" | b"connect" => {
                 expect_keys = &[
                     b"accept-version",
                     b"host",
@@ -194,13 +194,13 @@ impl<'a> Frame<'a> {
                     heartbeat,
                 }
             }
-            b"DISCONNECT" => {
+            b"DISCONNECT" | b"disconnect" => {
                 expect_keys = &[b"receipt"];
                 Disconnect {
                     receipt: fh(h, "receipt"),
                 }
             }
-            b"SEND" => {
+            b"SEND" | b"send" => {
                 expect_keys = &[b"destination", b"transaction"];
                 Send {
                     destination: eh(h, "destination")?,
@@ -208,7 +208,7 @@ impl<'a> Frame<'a> {
                     body: self.body.map(|v| v.to_vec()),
                 }
             }
-            b"SUBSCRIBE" => {
+            b"SUBSCRIBE" | b"subscribe" => {
                 expect_keys = &[b"destination", b"id", b"ack"];
                 Subscribe {
                     destination: eh(h, "destination")?,
@@ -222,37 +222,37 @@ impl<'a> Frame<'a> {
                     },
                 }
             }
-            b"UNSUBSCRIBE" => {
+            b"UNSUBSCRIBE" | b"unsubscribe" => {
                 expect_keys = &[b"id"];
                 Unsubscribe { id: eh(h, "id")? }
             }
-            b"ACK" => {
+            b"ACK" | b"ack" => {
                 expect_keys = &[b"id", b"transaction"];
                 Ack {
                     id: eh(h, "id")?,
                     transaction: fh(h, "transaction"),
                 }
             }
-            b"NACK" => {
+            b"NACK" | b"nack" => {
                 expect_keys = &[b"id", b"transaction"];
                 Nack {
                     id: eh(h, "id")?,
                     transaction: fh(h, "transaction"),
                 }
             }
-            b"BEGIN" => {
+            b"BEGIN" | b"begin" => {
                 expect_keys = &[b"transaction"];
                 Begin {
                     transaction: eh(h, "transaction")?,
                 }
             }
-            b"COMMIT" => {
+            b"COMMIT" | b"commit" => {
                 expect_keys = &[b"transaction"];
                 Commit {
                     transaction: eh(h, "transaction")?,
                 }
             }
-            b"ABORT" => {
+            b"ABORT" | b"abort" => {
                 expect_keys = &[b"transaction"];
                 Abort {
                     transaction: eh(h, "transaction")?,
@@ -283,7 +283,7 @@ impl<'a> Frame<'a> {
         let h = &self.headers;
         let expect_keys: &[&[u8]];
         let content = match self.command {
-            b"CONNECTED" => {
+            b"CONNECTED" | b"connected" => {
                 expect_keys = &[b"version", b"session", b"server", b"heart-beat"];
                 Connected {
                     version: eh(h, "version")?,
@@ -292,7 +292,7 @@ impl<'a> Frame<'a> {
                     heartbeat: fh(h, "heart-beat"),
                 }
             }
-            b"MESSAGE" => {
+            b"MESSAGE" | b"message" => {
                 expect_keys = &[b"destination", b"message-id", b"subscription"];
                 Msg {
                     destination: eh(h, "destination")?,
@@ -301,13 +301,13 @@ impl<'a> Frame<'a> {
                     body: self.body.map(|v| v.to_vec()),
                 }
             }
-            b"RECEIPT" => {
+            b"RECEIPT" | b"receipt" => {
                 expect_keys = &[b"receipt-id"];
                 Receipt {
                     receipt_id: eh(h, "receipt-id")?,
                 }
             }
-            b"ERROR" => {
+            b"ERROR" | b"error" => {
                 expect_keys = &[b"message"];
                 Error {
                     message: fh(h, "message"),

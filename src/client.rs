@@ -19,7 +19,9 @@ pub async fn connect(
     address: String,
     login: Option<String>,
     passcode: Option<String>,
-) -> Result<impl Stream<Item = Result<Message<ServerMsg>>> + Sink<Message<ClientMsg>>> {
+) -> Result<
+    impl Stream<Item = Result<Message<ServerMsg>>> + Sink<Message<ClientMsg>, Error = failure::Error>,
+> {
     let addr = address.as_str().to_socket_addrs().unwrap().next().unwrap();
     let tcp = TcpStream::connect(&addr).await?;
     let mut transport = ClientCodec.framed(tcp);
@@ -35,7 +37,7 @@ async fn client_handshake(
 ) -> Result<()> {
     let connect = Message {
         content: ClientMsg::Connect {
-            accept_version: "1.1,1.2".into(),
+            accept_version: "1.2".into(),
             host: host,
             login: login,
             passcode: passcode,
