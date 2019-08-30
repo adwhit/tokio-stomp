@@ -2,11 +2,10 @@ extern crate futures;
 extern crate tokio;
 extern crate tokio_stomp;
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use futures::future::ok;
 use futures::prelude::*;
-use tokio::runtime::current_thread::block_on_all;
 use tokio_stomp::*;
 
 // The example connects to a local server, then sends the following messages -
@@ -14,58 +13,75 @@ use tokio_stomp::*;
 // It simultaneously receives and prints messages sent from the server, which in fact means
 // it ends up printing it's own message.
 
-fn main() {
-    let (fut, tx) = tokio_stomp::client::connect("127.0.0.1:61613".into(), None, None).unwrap();
+// You can start a simple STOMP server with docker:
+// `docker run -p 61613:61613 rmohr/activemq:latest`
 
-    // Sender thread
-    std::thread::spawn(move || {
-        std::thread::sleep(Duration::from_secs(1));
-        tx.unbounded_send(ClientMsg::Subscribe {
-            destination: "rusty".into(),
-            id: "myid".into(),
-            ack: None,
-        })
-        .unwrap();
+#[tokio::main]
+async fn main() -> Result<(), failure::Error> {
+    let conn = tokio_stomp::client::connect("127.0.0.1:61613".into(), None, None).await?;
+
+    tokio::timer::delay(Instant::now() + Duration::from_millis(200)).await;
+
+    let (mut sink, stream) = conn.split();
+
+    let fut1 = async move {
+        sink.send(
+            ClientMsg::Subscribe {
+                destination: "rusty".into(),
+                id: "myid".into(),
+                ack: None,
+            }
+            .into(),
+        )
+        .await?;
         println!("Subscribe sent");
 
-        std::thread::sleep(Duration::from_secs(1));
-        tx.unbounded_send(ClientMsg::Send {
-            destination: "rusty".into(),
-            transaction: None,
-            body: Some(b"Hello there rustaceans!".to_vec()),
-        })
-        .unwrap();
+        tokio::timer::delay(Instant::now() + Duration::from_millis(200)).await;
+
+        sink.send(
+            ClientMsg::Send {
+                destination: "rusty".into(),
+                transaction: None,
+                body: Some(b"Hello there rustaceans!".to_vec()),
+            }
+            .into(),
+        )
+        .await?;
         println!("Message sent");
 
-        std::thread::sleep(Duration::from_secs(1));
-        tx.unbounded_send(ClientMsg::Unsubscribe { id: "myid".into() })
-            .unwrap();
+        tokio::timer::delay(Instant::now() + Duration::from_millis(200)).await;
+
+        sink.send(ClientMsg::Unsubscribe { id: "myid".into() }.into())
+            .await?;
         println!("Unsubscribe sent");
 
-        std::thread::sleep(Duration::from_secs(1));
-        tx.unbounded_send(ClientMsg::Disconnect { receipt: None })
-            .unwrap();
+        tokio::timer::delay(Instant::now() + Duration::from_millis(200)).await;
+
+        tokio::timer::delay(Instant::now() + Duration::from_secs(1)).await;
+        sink.send(ClientMsg::Disconnect { receipt: None }.into())
+            .await?;
         println!("Disconnect sent");
 
-        std::thread::sleep(Duration::from_secs(1));
-    });
+        Ok(())
+    };
 
     // Listen from the main thread. Once the Disconnect message is sent from
     // the sender thread, the server will disconnect the client and the future
     // will resolve, ending the program
-    let fut = fut
-        .for_each(|item| {
-            if let ServerMsg::Message { body, .. } = item.content {
-                println!(
-                    "Message received: {:?}",
-                    String::from_utf8_lossy(&body.unwrap())
-                );
-            } else {
-                println!("{:?}", item);
-            }
-            ok(())
-        })
-        .map_err(|e| eprintln!("{}", e));
+    let fut2 = stream.try_for_each(|item| {
+        if let ServerMsg::Message { body, .. } = item.content {
+            println!(
+                "Message received: {:?}",
+                String::from_utf8_lossy(&body.unwrap())
+            );
+        } else {
+            println!("{:?}", item);
+        }
+        ok(())
+    });
 
-    block_on_all(fut).unwrap();
+    futures::future::select(Box::pin(fut1), Box::pin(fut2))
+        .await
+        .factor_first()
+        .0
 }

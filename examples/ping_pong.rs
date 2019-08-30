@@ -11,8 +11,8 @@ use tokio_stomp::*;
 // and then sends either PING or PONG messages to the server while listening
 // for replies. This continues indefinitely (ctrl-c to exit)
 
-// You can start a simple server with [coilmq](https://github.com/hozn/coilmq):
-// coilmq -b 0.0.0.0 -p 61613
+// You can start a simple STOMP server with docker:
+// `docker run -p 61613:61613 rmohr/activemq:latest`
 
 async fn client(listens: &str, sends: &str, msg: &[u8]) -> Result<(), failure::Error> {
     let mut conn = tokio_stomp::client::connect("127.0.0.1:61613".into(), None, None).await?;
