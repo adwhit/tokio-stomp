@@ -12,3 +12,11 @@ It aims to be fast and fully-featured with a simple streaming interface.
 For full examples, see the examples directory.
 
 License: [MIT](LICENSE)
+
+## TODO
+
+* Support spec v1.1
+* More precise errors
+* Built-in ACK/NACK handling
+* Auto-disconnect on ERROR
+* Once `async/await` lands in `stable`: release v0.2
