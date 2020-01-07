@@ -2,7 +2,7 @@ extern crate futures;
 extern crate tokio;
 extern crate tokio_stomp;
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use futures::prelude::*;
 use tokio_stomp::*;
@@ -34,7 +34,7 @@ async fn client(listens: &str, sends: &str, msg: &[u8]) -> Result<(), failure::E
         } else {
             failure::bail!("Unexpected: {:?}", msg)
         }
-        tokio::timer::delay(Instant::now() + Duration::from_secs(1)).await;
+        tokio::time::delay_for(Duration::from_secs(1)).await;
     }
 }
 
