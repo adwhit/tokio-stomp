@@ -36,22 +36,22 @@ impl<'a> Frame<'a> {
         fn write_escaped(b: u8, buffer: &mut BytesMut) {
             match b {
                 b'\r' => {
-                    buffer.put(b'\\');
-                    buffer.put(b'r')
+                    buffer.put_u8(b'\\');
+                    buffer.put_u8(b'r')
                 }
                 b'\n' => {
-                    buffer.put(b'\\');
-                    buffer.put(b'n')
+                    buffer.put_u8(b'\\');
+                    buffer.put_u8(b'n')
                 }
                 b':' => {
-                    buffer.put(b'\\');
-                    buffer.put(b'c')
+                    buffer.put_u8(b'\\');
+                    buffer.put_u8(b'c')
                 }
                 b'\\' => {
-                    buffer.put(b'\\');
-                    buffer.put(b'\\')
+                    buffer.put_u8(b'\\');
+                    buffer.put_u8(b'\\')
                 }
-                b => buffer.put(b),
+                b => buffer.put_u8(b),
             }
         }
         let requires = self.command.len()
@@ -65,25 +65,25 @@ impl<'a> Frame<'a> {
             buffer.reserve(requires);
         }
         buffer.put_slice(self.command);
-        buffer.put(b'\n');
+        buffer.put_u8(b'\n');
         self.headers.iter().for_each(|&(key, ref val)| {
             for byte in key {
                 write_escaped(*byte, buffer);
             }
-            buffer.put(b':');
+            buffer.put_u8(b':');
             for byte in val.iter() {
                 write_escaped(*byte, buffer);
             }
-            buffer.put(b'\n');
+            buffer.put_u8(b'\n');
         });
         if let Some(body) = self.body {
             buffer.put_slice(&get_content_length_header(&body));
-            buffer.put(b'\n');
+            buffer.put_u8(b'\n');
             buffer.put_slice(body);
         } else {
-            buffer.put(b'\n');
+            buffer.put_u8(b'\n');
         }
-        buffer.put(b'\x00');
+        buffer.put_u8(b'\x00');
     }
 }
 

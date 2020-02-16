@@ -1,11 +1,11 @@
 use std::net::ToSocketAddrs;
 
-use bytes::BytesMut;
+use bytes::{Buf, BytesMut};
 use futures::prelude::*;
 use futures::sink::SinkExt;
 
-use tokio::codec::{Decoder, Encoder, Framed};
 use tokio::net::TcpStream;
+use tokio_util::codec::{Decoder, Encoder, Framed};
 
 type ClientTransport = Framed<TcpStream, ClientCodec>;
 
@@ -82,7 +82,7 @@ impl Decoder for ClientCodec {
             Err(nom::Err::Incomplete(_)) => return Ok(None),
             Err(e) => failure::bail!("Parse failed: {:?}", e),
         };
-        src.split_to(offset);
+        src.advance(offset);
         item.map(|v| Some(v))
     }
 }

@@ -11,12 +11,13 @@ readme = "README.md"
 edition = "2018"
 
 [dependencies]
-bytes = "0.4"
-custom_debug_derive = "0.1.7"
-failure = "0.1"
-futures-preview = "0.3.0-alpha.18"
-tokio = "0.2.0-alpha.4"
+bytes = "0.5.4"
+custom_debug_derive = "0.4.0"
+failure = "0.1.6"
+futures = "0.3"
+tokio = { version = "0.2.11", features = ["net"] }
+tokio-util = { version = "0.2.0", features = ["codec"] }
 nom = "4"
 
 [dev-dependencies]
-tokio = {version = "0.2.0-alpha.3", features = ["tokio-timer"] }
+tokio = { version = "0.2.11", features = ["time", "macros"] }

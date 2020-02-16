@@ -1,8 +1,4 @@
-extern crate futures;
-extern crate tokio;
-extern crate tokio_stomp;
-
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use futures::future::ok;
 use futures::prelude::*;
@@ -20,7 +16,7 @@ use tokio_stomp::*;
 async fn main() -> Result<(), failure::Error> {
     let conn = client::connect("127.0.0.1:61613", None, None).await?;
 
-    tokio::timer::delay(Instant::now() + Duration::from_millis(200)).await;
+    tokio::time::delay_for(Duration::from_millis(200)).await;
 
     let (mut sink, stream) = conn.split();
 
@@ -28,7 +24,7 @@ async fn main() -> Result<(), failure::Error> {
         sink.send(client::subscribe("rusty", "myid")).await?;
         println!("Subscribe sent");
 
-        tokio::timer::delay(Instant::now() + Duration::from_millis(200)).await;
+        tokio::time::delay_for(Duration::from_millis(200)).await;
 
         sink.send(
             ToServer::Send {
@@ -41,15 +37,15 @@ async fn main() -> Result<(), failure::Error> {
         .await?;
         println!("Message sent");
 
-        tokio::timer::delay(Instant::now() + Duration::from_millis(200)).await;
+        tokio::time::delay_for(Duration::from_millis(200)).await;
 
         sink.send(ToServer::Unsubscribe { id: "myid".into() }.into())
             .await?;
         println!("Unsubscribe sent");
 
-        tokio::timer::delay(Instant::now() + Duration::from_millis(200)).await;
+        tokio::time::delay_for(Duration::from_millis(200)).await;
 
-        tokio::timer::delay(Instant::now() + Duration::from_secs(1)).await;
+        tokio::time::delay_for(Duration::from_secs(1)).await;
         sink.send(ToServer::Disconnect { receipt: None }.into())
             .await?;
         println!("Disconnect sent");
