@@ -19,4 +19,3 @@ License: [MIT](LICENSE)
 * More precise errors
 * Built-in ACK/NACK handling
 * Auto-disconnect on ERROR
-* Once `async/await` lands in `stable`: release v0.2
