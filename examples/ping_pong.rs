@@ -30,7 +30,7 @@ async fn client(listens: &str, sends: &str, msg: &[u8]) -> Result<(), failure::E
         } else {
             failure::bail!("Unexpected: {:?}", msg)
         }
-        tokio::time::delay_for(Duration::from_secs(1)).await;
+        tokio::time::sleep(Duration::from_secs(1)).await;
     }
 }
 

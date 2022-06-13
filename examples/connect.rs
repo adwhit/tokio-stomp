@@ -16,7 +16,7 @@ use tokio_stomp::*;
 async fn main() -> Result<(), failure::Error> {
     let conn = client::connect("127.0.0.1:61613", None, None).await?;
 
-    tokio::time::delay_for(Duration::from_millis(200)).await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
 
     let (mut sink, stream) = conn.split();
 
@@ -24,7 +24,7 @@ async fn main() -> Result<(), failure::Error> {
         sink.send(client::subscribe("rusty", "myid")).await?;
         println!("Subscribe sent");
 
-        tokio::time::delay_for(Duration::from_millis(200)).await;
+        tokio::time::sleep(Duration::from_millis(200)).await;
 
         sink.send(
             ToServer::Send {
@@ -37,15 +37,15 @@ async fn main() -> Result<(), failure::Error> {
         .await?;
         println!("Message sent");
 
-        tokio::time::delay_for(Duration::from_millis(200)).await;
+        tokio::time::sleep(Duration::from_millis(200)).await;
 
         sink.send(ToServer::Unsubscribe { id: "myid".into() }.into())
             .await?;
         println!("Unsubscribe sent");
 
-        tokio::time::delay_for(Duration::from_millis(200)).await;
+        tokio::time::sleep(Duration::from_millis(200)).await;
 
-        tokio::time::delay_for(Duration::from_secs(1)).await;
+        tokio::time::sleep(Duration::from_secs(1)).await;
         sink.send(ToServer::Disconnect { receipt: None }.into())
             .await?;
         println!("Disconnect sent");
