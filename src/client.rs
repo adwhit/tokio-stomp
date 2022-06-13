@@ -90,9 +90,12 @@ impl Decoder for ClientCodec {
 impl Encoder<Message<ToServer>> for ClientCodec {
     type Error = failure::Error;
 
-    fn encode(&mut self, item: Message<ToServer>, dst: &mut BytesMut) -> std::result::Result<(), Self::Error> {
+    fn encode(
+        &mut self,
+        item: Message<ToServer>,
+        dst: &mut BytesMut,
+    ) -> std::result::Result<(), Self::Error> {
         item.to_frame().serialize(dst);
         Ok(())
     }
-
 }
