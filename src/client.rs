@@ -11,6 +11,7 @@ type ClientTransport = Framed<TcpStream, ClientCodec>;
 
 use crate::frame;
 use crate::{FromServer, Message, Result, ToServer};
+use anyhow::{bail, anyhow};
 
 /// Connect to a STOMP server via TCP, including the connection handshake.
 /// If successful, returns a tuple of a message stream and a sender,
@@ -20,7 +21,7 @@ pub async fn connect(
     login: Option<String>,
     passcode: Option<String>,
 ) -> Result<
-    impl Stream<Item = Result<Message<FromServer>>> + Sink<Message<ToServer>, Error = failure::Error>,
+    impl Stream<Item = Result<Message<FromServer>>> + Sink<Message<ToServer>, Error = anyhow::Error>,
 > {
     let address = address.into();
     let addr = address.as_str().to_socket_addrs().unwrap().next().unwrap();
@@ -53,7 +54,7 @@ async fn client_handshake(
     if let Some(FromServer::Connected { .. }) = msg.as_ref().map(|m| &m.content) {
         Ok(())
     } else {
-        Err(failure::format_err!("unexpected reply: {:?}", msg))
+        Err(anyhow!("unexpected reply: {:?}", msg))
     }
 }
 
@@ -71,7 +72,7 @@ struct ClientCodec;
 
 impl Decoder for ClientCodec {
     type Item = Message<FromServer>;
-    type Error = failure::Error;
+    type Error = anyhow::Error;
 
     fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>> {
         let (item, offset) = match frame::parse_frame(&src) {
@@ -80,7 +81,7 @@ impl Decoder for ClientCodec {
                 remain.as_ptr() as usize - src.as_ptr() as usize,
             ),
             Err(nom::Err::Incomplete(_)) => return Ok(None),
-            Err(e) => failure::bail!("Parse failed: {:?}", e),
+            Err(e) => bail!("Parse failed: {:?}", e),
         };
         src.advance(offset);
         item.map(|v| Some(v))
@@ -89,7 +90,7 @@ impl Decoder for ClientCodec {
 
 impl Encoder for ClientCodec {
     type Item = Message<ToServer>;
-    type Error = failure::Error;
+    type Error = anyhow::Error;
 
     fn encode(&mut self, item: Self::Item, dst: &mut BytesMut) -> Result<()> {
         item.to_frame().serialize(dst);
