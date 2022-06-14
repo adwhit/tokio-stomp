@@ -7,7 +7,7 @@ use futures::sink::SinkExt;
 use tokio::net::TcpStream;
 use tokio_util::codec::{Decoder, Encoder, Framed};
 
-type ClientTransport = Framed<TcpStream, ClientCodec>;
+pub type ClientTransport = Framed<TcpStream, ClientCodec>;
 
 use crate::frame;
 use crate::{FromServer, Message, Result, ToServer};
@@ -20,9 +20,7 @@ pub async fn connect(
     address: impl Into<String>,
     login: Option<String>,
     passcode: Option<String>,
-) -> Result<
-    impl Stream<Item = Result<Message<FromServer>>> + Sink<Message<ToServer>, Error = anyhow::Error>,
-> {
+) -> Result<ClientTransport> {
     let address = address.into();
     let addr = address.as_str().to_socket_addrs().unwrap().next().unwrap();
     let tcp = TcpStream::connect(&addr).await?;
@@ -68,7 +66,7 @@ pub fn subscribe(dest: impl Into<String>, id: impl Into<String>) -> Message<ToSe
     .into()
 }
 
-struct ClientCodec;
+pub struct ClientCodec;
 
 impl Decoder for ClientCodec {
     type Item = Message<FromServer>;
