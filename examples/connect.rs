@@ -13,7 +13,7 @@ use tokio_stomp::*;
 // `docker run -p 61613:61613 rmohr/activemq:latest`
 
 #[tokio::main]
-async fn main() -> Result<(), failure::Error> {
+async fn main() -> Result<()> {
     let conn = client::connect("127.0.0.1:61613", None, None).await?;
 
     tokio::time::sleep(Duration::from_millis(200)).await;

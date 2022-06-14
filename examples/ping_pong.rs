@@ -10,7 +10,7 @@ use tokio_stomp::*;
 // You can start a simple STOMP server with docker:
 // `docker run -p 61613:61613 rmohr/activemq:latest`
 
-async fn client(listens: &str, sends: &str, msg: &[u8]) -> Result<(), failure::Error> {
+async fn client(listens: &str, sends: &str, msg: &[u8]) -> Result<()> {
     let mut conn = tokio_stomp::client::connect("127.0.0.1:61613", None, None).await?;
     conn.send(client::subscribe(listens, "myid")).await?;
 
@@ -28,14 +28,14 @@ async fn client(listens: &str, sends: &str, msg: &[u8]) -> Result<(), failure::E
         if let Some(FromServer::Message { body, .. }) = msg.as_ref().map(|m| &m.content) {
             println!("{}", String::from_utf8_lossy(&body.as_ref().unwrap()));
         } else {
-            failure::bail!("Unexpected: {:?}", msg)
+            anyhow::bail!("Unexpected: {:?}", msg)
         }
         tokio::time::sleep(Duration::from_secs(1)).await;
     }
 }
 
 #[tokio::main]
-async fn main() -> Result<(), failure::Error> {
+async fn main() -> Result<()> {
     let fut1 = Box::pin(client("ping", "pong", b"PONG!"));
     let fut2 = Box::pin(client("pong", "ping", b"PING!"));
 
