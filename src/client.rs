@@ -11,7 +11,7 @@ type ClientTransport = Framed<TcpStream, ClientCodec>;
 
 use crate::frame;
 use crate::{FromServer, Message, Result, ToServer};
-use anyhow::{bail, anyhow};
+use anyhow::{anyhow, bail};
 
 /// Connect to a STOMP server via TCP, including the connection handshake.
 /// If successful, returns a tuple of a message stream and a sender,
