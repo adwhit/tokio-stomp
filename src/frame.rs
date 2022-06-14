@@ -1,5 +1,5 @@
 use bytes::{BufMut, BytesMut};
-use failure::{bail, format_err};
+use anyhow::{bail, anyhow};
 
 use std::borrow::Cow;
 
@@ -163,7 +163,7 @@ fn fetch_header<'a>(headers: &'a [(&'a [u8], Cow<'a, [u8]>)], key: &'a str) -> O
 }
 
 fn expect_header<'a>(headers: &'a [(&'a [u8], Cow<'a, [u8]>)], key: &'a str) -> Result<String> {
-    fetch_header(headers, key).ok_or_else(|| format_err!("Expected header '{}' missing", key))
+    fetch_header(headers, key).ok_or_else(|| anyhow!("Expected header '{}' missing", key))
 }
 
 impl<'a> Frame<'a> {
@@ -345,8 +345,8 @@ fn get_content_length_header(body: &[u8]) -> Vec<u8> {
 
 fn parse_heartbeat(hb: &str) -> Result<(u32, u32)> {
     let mut split = hb.splitn(1, ',');
-    let left = split.next().ok_or_else(|| format_err!("Bad heartbeat"))?;
-    let right = split.next().ok_or_else(|| format_err!("Bad heartbeat"))?;
+    let left = split.next().ok_or_else(|| anyhow!("Bad heartbeat"))?;
+    let right = split.next().ok_or_else(|| anyhow!("Bad heartbeat"))?;
     Ok((left.parse()?, right.parse()?))
 }
 
