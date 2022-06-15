@@ -8,16 +8,16 @@ homepage = "http://github.com/adwhit/tokio-stomp"
 keywords = ["stomp", "tokio", "streaming"]
 license = "MIT"
 readme = "README.md"
-edition = "2018"
+edition = "2021"
 
 [dependencies]
-bytes = "0.5.4"
+bytes = "1.1.0"
 custom_debug_derive = "0.4.0"
 failure = "0.1.6"
 futures = "0.3"
-tokio = { version = "0.2.11", features = ["net"] }
-tokio-util = { version = "0.2.0", features = ["codec"] }
+tokio = { version = "1", features = ["net"] }
+tokio-util = { version = "0.7", features = ["codec"] }
 nom = "4"
 
 [dev-dependencies]
-tokio = { version = "0.2.11", features = ["time", "macros"] }
+tokio = { version = "1", features = ["time", "macros", "rt-multi-thread"] }

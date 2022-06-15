@@ -39,9 +39,9 @@ async fn client_handshake(
     let connect = Message {
         content: ToServer::Connect {
             accept_version: "1.2".into(),
-            host: host,
-            login: login,
-            passcode: passcode,
+            host,
+            login,
+            passcode,
             heartbeat: None,
         },
         extra_headers: vec![],
@@ -87,11 +87,14 @@ impl Decoder for ClientCodec {
     }
 }
 
-impl Encoder for ClientCodec {
-    type Item = Message<ToServer>;
+impl Encoder<Message<ToServer>> for ClientCodec {
     type Error = failure::Error;
 
-    fn encode(&mut self, item: Self::Item, dst: &mut BytesMut) -> Result<()> {
+    fn encode(
+        &mut self,
+        item: Message<ToServer>,
+        dst: &mut BytesMut,
+    ) -> std::result::Result<(), Self::Error> {
         item.to_frame().serialize(dst);
         Ok(())
     }
