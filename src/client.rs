@@ -20,7 +20,7 @@ pub async fn connect(
     login: Option<String>,
     passcode: Option<String>,
 ) -> Result<
-    impl Stream<Item = Result<Message<FromServer>>> + Sink<Message<ToServer>, Error = failure::Error>,
+    impl Stream<Item = Result<Message<FromServer>>> + Sink<Message<ToServer>, Error = failure::Error> + Send,
 > {
     let address = address.into();
     let addr = address.as_str().to_socket_addrs().unwrap().next().unwrap();
