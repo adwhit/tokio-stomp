@@ -9,7 +9,7 @@ use frame::Frame;
 pub mod client;
 mod frame;
 
-pub type Result<T> = std::result::Result<T, anyhow::Error>;
+pub(crate) type Result<T> = std::result::Result<T, anyhow::Error>;
 
 /// A representation of a STOMP frame
 #[derive(Debug)]
