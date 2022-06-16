@@ -344,7 +344,7 @@ fn get_content_length_header(body: &[u8]) -> Vec<u8> {
 }
 
 fn parse_heartbeat(hb: &str) -> Result<(u32, u32)> {
-    let mut split = hb.splitn(1, ',');
+    let mut split = hb.splitn(2, ',');
     let left = split.next().ok_or_else(|| anyhow!("Bad heartbeat"))?;
     let right = split.next().ok_or_else(|| anyhow!("Bad heartbeat"))?;
     Ok((left.parse()?, right.parse()?))
