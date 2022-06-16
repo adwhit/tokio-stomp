@@ -368,11 +368,11 @@ impl ToServer {
                     (b"accept-version", Some(Borrowed(accept_version.as_bytes()))),
                     (b"host", Some(Borrowed(host.as_bytes()))),
                     (b"login", sb(login)),
-                    (b"passcode", sb(passcode)),
                     (
                         b"heart-beat",
                         heartbeat.map(|(v1, v2)| Owned(format!("{},{}", v1, v2).into())),
                     ),
+                    (b"passcode", sb(passcode)),
                 ],
                 None,
             ),
@@ -467,6 +467,7 @@ mod tests {
 accept-version:1.2
 host:datafeeds.here.co.uk
 login:user
+heart-beat:6,7
 passcode:password\n\n\x00"
             .to_vec();
         let (_, frame) = parse_frame(&data).unwrap();
@@ -475,6 +476,7 @@ passcode:password\n\n\x00"
             (&b"accept-version"[..], &b"1.2"[..]),
             (b"host", b"datafeeds.here.co.uk"),
             (b"login", b"user"),
+            (b"heart-beat", b"6,7"),
             (b"passcode", b"password"),
         ];
         let fh: Vec<_> = frame.headers.iter().map(|&(k, ref v)| (k, &**v)).collect();
