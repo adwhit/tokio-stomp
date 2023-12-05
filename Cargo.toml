@@ -11,13 +11,14 @@ readme = "README.md"
 edition = "2021"
 
 [dependencies]
-bytes = "1.1.0"
-custom_debug_derive = "0.4.0"
-anyhow = "1.0"
-futures = "0.3"
-tokio = { version = "1", features = ["net"] }
-tokio-util = { version = "0.7", features = ["codec"] }
-nom = "4"
+bytes = "1.5.0"
+custom_debug_derive = "0.5.1"
+anyhow = "1.0.75"
+futures = "0.3.29"
+tokio = { version = "1.34.0", features = ["net"] }
+tokio-util = { version = "0.7.10", features = ["codec"] }
+nom = "7"
 
 [dev-dependencies]
-tokio = { version = "1", features = ["time", "macros", "rt-multi-thread"] }
+pretty_assertions = "1.4.0"
+tokio = { version = "1.34.0", features = ["time", "macros", "rt-multi-thread"] }

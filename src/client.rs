@@ -17,15 +17,16 @@ use anyhow::{anyhow, bail};
 /// If successful, returns a tuple of a message stream and a sender,
 /// which may be used to receive and send messages respectively.
 pub async fn connect(
-    address: impl Into<String>,
+    server: impl Into<String>,
+    host: impl Into<String>,
     login: Option<String>,
     passcode: Option<String>,
 ) -> Result<ClientTransport> {
-    let address = address.into();
+    let address = server.into();
     let addr = address.as_str().to_socket_addrs().unwrap().next().unwrap();
     let tcp = TcpStream::connect(&addr).await?;
     let mut transport = ClientCodec.framed(tcp);
-    client_handshake(&mut transport, address, login, passcode).await?;
+    client_handshake(&mut transport, host.into(), login, passcode).await?;
     Ok(transport)
 }
 
