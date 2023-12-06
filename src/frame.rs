@@ -117,7 +117,7 @@ fn is_empty_slice(s: &[u8]) -> Option<&[u8]> {
 }
 
 pub fn parse_frame(input: &[u8]) -> IResult<&[u8], Frame> {
-    // read stream util header end
+    // read stream until header end
     many_till(take(1_usize), count(line_ending, 2))(input)?;
 
     let (input, (command, headers)) = tuple((
@@ -130,7 +130,7 @@ pub fn parse_frame(input: &[u8]) -> IResult<&[u8], Frame> {
 
     let (input, body) = match get_content_length(&headers) {
         None => take_until("\x00").map(is_empty_slice).parse(input)?,
-        Some(length) => opt(take(length)).parse(input)?,
+        Some(length) => take(length).map(Some).parse(input)?,
     };
 
     let (input, _) = tuple((tag("\x00"), opt(complete(line_ending))))(input)?;
@@ -462,9 +462,9 @@ impl ToServer {
 
 #[cfg(test)]
 mod tests {
+
     use super::*;
-    #[cfg(test)]
-    use pretty_assertions::assert_eq;
+    use pretty_assertions::{assert_eq, assert_matches};
     #[test]
     fn parse_and_serialize_connect() {
         let data = b"CONNECT
@@ -567,5 +567,67 @@ subscription:some-id\n\nsomething-like-header:1\x00\r\n"
         // TODO to_frame for FromServer
         // let roundtrip = stomp.to_frame().serialize();
         // assert_eq!(roundtrip, data);
+    }
+
+    #[test]
+    fn parse_a_incomplete_message() {
+        assert_matches!(
+            parse_frame(b"\nMESSAG".as_ref()),
+            Err(nom::Err::Incomplete(_))
+        );
+
+        assert_matches!(
+            parse_frame(b"\nMESSAGE\n\n".as_ref()),
+            Err(nom::Err::Incomplete(_))
+        );
+
+        assert_matches!(
+            parse_frame(b"\nMESSAG\n\n\0".as_ref()),
+            Ok((
+                _,
+                Frame {
+                    command: b"MESSAG",
+                    headers: _,
+                    body: None
+                }
+            ))
+        );
+
+        assert_matches!(
+            parse_frame(b"\nMESSAGE\r\ndestination:datafeeds.here.co.uk".as_ref()),
+            Err(nom::Err::Incomplete(_))
+        );
+
+        assert_matches!(
+            parse_frame(b"\nMESSAGE\r\ndestination:datafeeds.here.co.uk\n\n".as_ref()),
+            Err(nom::Err::Incomplete(_))
+        );
+
+        assert_matches!(
+            parse_frame(b"\nMESSAGE\r\ndestination:datafeeds.here.co.uk".as_ref()),
+            Err(nom::Err::Incomplete(_))
+        );
+
+        assert_matches!(
+            parse_frame(b"\nMESSAGE\r\ndestination:datafeeds.here.co.uk\n\n\0remain".as_ref()),
+            Ok((b"remain", Frame { .. })),
+            "stream with other after body end, should return remain text"
+        );
+
+        assert_matches!(
+            parse_frame(b"\nMESSAGE\ncontent-length:10000\n\n\0remain".as_ref()),
+            Err(nom::Err::Incomplete(_)),
+            "content-length:10000, body size<10000, return incomplete"
+        );
+        assert_matches!(
+            parse_frame(b"\nMESSAGE\ncontent-length:0\n\n\0remain".as_ref()),
+            Ok((b"remain", Frame { body: Some([]), .. })),
+            "empty body with content-length:0, body should be Some([])"
+        );
+        assert_matches!(
+            parse_frame(b"\nMESSAGE\n\n\0remain".as_ref()),
+            Ok((b"remain", Frame { body: None, .. })),
+            "empty body without content-length header, body should be None"
+        );
     }
 }

@@ -22,7 +22,7 @@ pub async fn connect(
     login: Option<String>,
     passcode: Option<String>,
 ) -> Result<ClientTransport> {
-    let address = server.into();
+    let address: String = server.into();
     let addr = address.as_str().to_socket_addrs().unwrap().next().unwrap();
     let tcp = TcpStream::connect(&addr).await?;
     let mut transport = ClientCodec.framed(tcp);
