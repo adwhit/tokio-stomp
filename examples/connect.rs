@@ -14,7 +14,13 @@ use tokio_stomp::*;
 
 #[tokio::main]
 async fn main() -> Result<(), anyhow::Error> {
-    let conn = client::connect("127.0.0.1:61613", None, None).await?;
+    let conn = client::connect(
+        "127.0.0.1:61613",
+        "/".to_string(),
+        "guest".to_string().into(),
+        "guest".to_string().into(),
+    )
+    .await?;
 
     tokio::time::sleep(Duration::from_millis(200)).await;
 
