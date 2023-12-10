@@ -2,7 +2,7 @@ use anyhow::{anyhow, bail};
 use bytes::{BufMut, BytesMut};
 use nom::{
     bytes::streaming::{is_not, tag, take, take_until},
-    character::streaming::{alpha1, line_ending},
+    character::streaming::{alpha1, line_ending, not_line_ending},
     combinator::{complete, opt},
     multi::{count, many0, many_till},
     sequence::{delimited, separated_pair, terminated, tuple},
@@ -149,7 +149,7 @@ fn parse_header(input: &[u8]) -> IResult<&[u8], (&[u8], Cow<[u8]>)> {
     complete(separated_pair(
         is_not(":\r\n"),
         tag(":"),
-        terminated(is_not(":\r\n"), line_ending).map(Cow::Borrowed),
+        terminated(not_line_ending, line_ending).map(Cow::Borrowed),
     ))
     .parse(input)
 }
@@ -178,14 +178,13 @@ impl<'a> Frame<'a> {
         let expect_keys: &[&[u8]];
         let content = match self.command {
             b"STOMP" | b"CONNECT" | b"stomp" | b"connect" => {
-                expect_keys =
-                    &[
-                        b"accept-version",
-                        b"host",
-                        b"login",
-                        b"passcode",
-                        b"heart-beat",
-                    ];
+                expect_keys = &[
+                    b"accept-version",
+                    b"host",
+                    b"login",
+                    b"passcode",
+                    b"heart-beat",
+                ];
                 let heartbeat = if let Some(hb) = fh(h, "heart-beat") {
                     Some(parse_heartbeat(&hb)?)
                 } else {
@@ -629,5 +628,29 @@ subscription:some-id\n\nsomething-like-header:1\x00\r\n"
             Ok((b"remain", Frame { body: None, .. })),
             "empty body without content-length header, body should be None"
         );
+    }
+
+    #[test]
+    fn parse_and_serialize_message_header_value_with_colon() {
+        let data = b"
+CONNECTED
+server:ActiveMQ/6.0.0
+heart-beat:0,0
+session:ID:orbstack-45879-1702220142549-3:2
+version:1.2
+
+\0\n"
+            .to_vec();
+        let (_, frame) = parse_frame(&data).unwrap();
+        assert_eq!(frame.command, b"CONNECTED");
+        let headers_expect: Vec<(&[u8], &[u8])> = vec![
+            (b"server", b"ActiveMQ/6.0.0"),
+            (b"heart-beat", b"0,0"),
+            (b"session", b"ID:orbstack-45879-1702220142549-3:2"),
+            (b"version", b"1.2"),
+        ];
+        let fh: Vec<_> = frame.headers.iter().map(|&(k, ref v)| (k, &**v)).collect();
+        assert_eq!(fh, headers_expect);
+        frame.to_server_msg().unwrap();
     }
 }
