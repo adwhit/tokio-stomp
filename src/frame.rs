@@ -116,7 +116,7 @@ fn is_empty_slice(s: &[u8]) -> Option<&[u8]> {
     }
 }
 
-pub fn parse_frame(input: &[u8]) -> IResult<&[u8], Frame> {
+pub(crate) fn parse_frame(input: &[u8]) -> IResult<&[u8], Frame> {
     // read stream until header end
     many_till(take(1_usize), count(line_ending, 2))(input)?;
 
