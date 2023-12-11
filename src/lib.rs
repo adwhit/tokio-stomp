@@ -1,15 +1,12 @@
 //! tokio-stomp - A library for asynchronous streaming of STOMP messages
 
-#[macro_use]
-extern crate nom;
-
-use custom_debug_derive::CustomDebug;
+use custom_debug_derive::Debug as CustomDebug;
 use frame::Frame;
 
 pub mod client;
 mod frame;
 
-pub(crate) type Result<T> = std::result::Result<T, anyhow::Error>;
+pub(crate) type Result<T> = anyhow::Result<T>;
 
 /// A representation of a STOMP frame
 #[derive(Debug)]

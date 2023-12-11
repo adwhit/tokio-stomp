@@ -1,5 +1,13 @@
 use anyhow::{anyhow, bail};
 use bytes::{BufMut, BytesMut};
+use nom::{
+    bytes::streaming::{is_not, tag, take, take_until},
+    character::streaming::{alpha1, line_ending, not_line_ending},
+    combinator::{complete, opt},
+    multi::{count, many0, many_till},
+    sequence::{delimited, separated_pair, terminated, tuple},
+    IResult, Parser,
+};
 
 use std::borrow::Cow;
 
@@ -89,27 +97,12 @@ impl<'a> Frame<'a> {
 
 // Nom definitions
 
-named!(eol, preceded!(opt!(tag!("\r")), tag!("\n")));
-
-named!(
-    parse_header<(&[u8], Cow<[u8]>)>,
-    pair!(
-        take_until_either!(":\n"),
-        preceded!(
-            tag!(":"),
-            map!(take_until_and_consume1!("\n"), |bytes| Cow::Borrowed(
-                strip_cr(bytes)
-            ))
-        )
-    )
-);
-
-fn get_content_length(headers: &[(&[u8], Cow<[u8]>)]) -> Option<u32> {
-    for h in headers {
-        if h.0 == b"content-length" {
-            return std::str::from_utf8(&*h.1)
+fn get_content_length(headers: &[(&[u8], Cow<[u8]>)]) -> Option<usize> {
+    for (name, value) in headers {
+        if name == b"content-length" {
+            return std::str::from_utf8(value)
                 .ok()
-                .and_then(|v| v.parse::<u32>().ok());
+                .and_then(|v| v.parse::<usize>().ok());
         }
     }
     None
@@ -123,33 +116,42 @@ fn is_empty_slice(s: &[u8]) -> Option<&[u8]> {
     }
 }
 
-named!(
-    pub(crate) parse_frame<Frame>,
-    do_parse!(
-        many0!(eol)
-            >> command: map!(take_until_and_consume!("\n"), strip_cr)
-            >> headers: many0!(parse_header)
-            >> eol
-            >> body: switch!(value!(get_content_length(&*headers)),
-                Some(v) => map!(take!(v), Some) |
-                None => map!(take_until!("\x00"), is_empty_slice)
-            )
-            >> tag!("\x00")
-            >> many0!(complete!(eol))
-            >> (Frame {
-                command,
-                headers,
-                body,
-            })
-    )
-);
+pub(crate) fn parse_frame(input: &[u8]) -> IResult<&[u8], Frame> {
+    // read stream until header end
+    many_till(take(1_usize), count(line_ending, 2))(input)?;
 
-fn strip_cr(buf: &[u8]) -> &[u8] {
-    if let Some(&b'\r') = buf.last() {
-        &buf[..buf.len() - 1]
-    } else {
-        buf
-    }
+    let (input, (command, headers)) = tuple((
+        delimited(opt(complete(line_ending)), alpha1, line_ending), // command
+        terminated(
+            many0(parse_header), // header
+            line_ending,
+        ),
+    ))(input)?;
+
+    let (input, body) = match get_content_length(&headers) {
+        None => take_until("\x00").map(is_empty_slice).parse(input)?,
+        Some(length) => take(length).map(Some).parse(input)?,
+    };
+
+    let (input, _) = tuple((tag("\x00"), opt(complete(line_ending))))(input)?;
+
+    Ok((
+        input,
+        Frame {
+            command,
+            headers,
+            body,
+        },
+    ))
+}
+
+fn parse_header(input: &[u8]) -> IResult<&[u8], (&[u8], Cow<[u8]>)> {
+    complete(separated_pair(
+        is_not(":\r\n"),
+        tag(":"),
+        terminated(not_line_ending, line_ending).map(Cow::Borrowed),
+    ))
+    .parse(input)
 }
 
 fn fetch_header<'a>(headers: &'a [(&'a [u8], Cow<'a, [u8]>)], key: &'a str) -> Option<String> {
@@ -459,8 +461,9 @@ impl ToServer {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
 
+    use super::*;
+    use pretty_assertions::{assert_eq, assert_matches};
     #[test]
     fn parse_and_serialize_connect() {
         let data = b"CONNECT
@@ -514,5 +517,140 @@ subscription:some-id
         // TODO to_frame for FromServer
         // let roundtrip = stomp.to_frame().serialize();
         // assert_eq!(roundtrip, data);
+    }
+
+    #[test]
+    fn parse_and_serialize_message_with_body_start_with_newline() {
+        let mut data = b"MESSAGE
+destination:datafeeds.here.co.uk
+message-id:12345
+subscription:some-id"
+            .to_vec();
+        let body = "\n\n\nthis body contains  nulls \n and \r\n newlines OK?";
+        let rest = format!("\n\n{}\x00\r\n", body);
+        data.extend_from_slice(rest.as_bytes());
+        let (_, frame) = parse_frame(&data).unwrap();
+        assert_eq!(frame.command, b"MESSAGE");
+        let headers_expect: Vec<(&[u8], &[u8])> = vec![
+            (&b"destination"[..], &b"datafeeds.here.co.uk"[..]),
+            (b"message-id", b"12345"),
+            (b"subscription", b"some-id"),
+        ];
+        let fh: Vec<_> = frame.headers.iter().map(|&(k, ref v)| (k, &**v)).collect();
+        assert_eq!(fh, headers_expect);
+        assert_eq!(frame.body, Some(body.as_bytes()));
+        frame.to_server_msg().unwrap();
+        // TODO to_frame for FromServer
+        // let roundtrip = stomp.to_frame().serialize();
+        // assert_eq!(roundtrip, data);
+    }
+
+    #[test]
+    fn parse_and_serialize_message_body_like_header() {
+        let data = b"\nMESSAGE\r
+destination:datafeeds.here.co.uk
+message-id:12345
+subscription:some-id\n\nsomething-like-header:1\x00\r\n"
+            .to_vec();
+        let (_, frame) = parse_frame(&data).unwrap();
+        assert_eq!(frame.command, b"MESSAGE");
+        let headers_expect: Vec<(&[u8], &[u8])> = vec![
+            (b"destination", b"datafeeds.here.co.uk"),
+            (b"message-id", b"12345"),
+            (b"subscription", b"some-id"),
+        ];
+        let fh: Vec<_> = frame.headers.iter().map(|&(k, ref v)| (k, &**v)).collect();
+        assert_eq!(fh, headers_expect);
+        assert_eq!(frame.body, Some("something-like-header:1".as_bytes()));
+        frame.to_server_msg().unwrap();
+        // TODO to_frame for FromServer
+        // let roundtrip = stomp.to_frame().serialize();
+        // assert_eq!(roundtrip, data);
+    }
+
+    #[test]
+    fn parse_a_incomplete_message() {
+        assert_matches!(
+            parse_frame(b"\nMESSAG".as_ref()),
+            Err(nom::Err::Incomplete(_))
+        );
+
+        assert_matches!(
+            parse_frame(b"\nMESSAGE\n\n".as_ref()),
+            Err(nom::Err::Incomplete(_))
+        );
+
+        assert_matches!(
+            parse_frame(b"\nMESSAG\n\n\0".as_ref()),
+            Ok((
+                _,
+                Frame {
+                    command: b"MESSAG",
+                    headers: _,
+                    body: None
+                }
+            ))
+        );
+
+        assert_matches!(
+            parse_frame(b"\nMESSAGE\r\ndestination:datafeeds.here.co.uk".as_ref()),
+            Err(nom::Err::Incomplete(_))
+        );
+
+        assert_matches!(
+            parse_frame(b"\nMESSAGE\r\ndestination:datafeeds.here.co.uk\n\n".as_ref()),
+            Err(nom::Err::Incomplete(_))
+        );
+
+        assert_matches!(
+            parse_frame(b"\nMESSAGE\r\ndestination:datafeeds.here.co.uk".as_ref()),
+            Err(nom::Err::Incomplete(_))
+        );
+
+        assert_matches!(
+            parse_frame(b"\nMESSAGE\r\ndestination:datafeeds.here.co.uk\n\n\0remain".as_ref()),
+            Ok((b"remain", Frame { .. })),
+            "stream with other after body end, should return remain text"
+        );
+
+        assert_matches!(
+            parse_frame(b"\nMESSAGE\ncontent-length:10000\n\n\0remain".as_ref()),
+            Err(nom::Err::Incomplete(_)),
+            "content-length:10000, body size<10000, return incomplete"
+        );
+        assert_matches!(
+            parse_frame(b"\nMESSAGE\ncontent-length:0\n\n\0remain".as_ref()),
+            Ok((b"remain", Frame { body: Some([]), .. })),
+            "empty body with content-length:0, body should be Some([])"
+        );
+        assert_matches!(
+            parse_frame(b"\nMESSAGE\n\n\0remain".as_ref()),
+            Ok((b"remain", Frame { body: None, .. })),
+            "empty body without content-length header, body should be None"
+        );
+    }
+
+    #[test]
+    fn parse_and_serialize_message_header_value_with_colon() {
+        let data = b"
+CONNECTED
+server:ActiveMQ/6.0.0
+heart-beat:0,0
+session:ID:orbstack-45879-1702220142549-3:2
+version:1.2
+
+\0\n"
+            .to_vec();
+        let (_, frame) = parse_frame(&data).unwrap();
+        assert_eq!(frame.command, b"CONNECTED");
+        let headers_expect: Vec<(&[u8], &[u8])> = vec![
+            (b"server", b"ActiveMQ/6.0.0"),
+            (b"heart-beat", b"0,0"),
+            (b"session", b"ID:orbstack-45879-1702220142549-3:2"),
+            (b"version", b"1.2"),
+        ];
+        let fh: Vec<_> = frame.headers.iter().map(|&(k, ref v)| (k, &**v)).collect();
+        assert_eq!(fh, headers_expect);
+        frame.to_server_msg().unwrap();
     }
 }

@@ -11,7 +11,14 @@ use tokio_stomp::*;
 // `docker run -p 61613:61613 rmohr/activemq:latest`
 
 async fn client(listens: &str, sends: &str, msg: &[u8]) -> Result<(), anyhow::Error> {
-    let mut conn = tokio_stomp::client::connect("127.0.0.1:61613", None, None).await?;
+    let mut conn = client::connect(
+        "127.0.0.1:61613",
+        "/".to_string(),
+        "guest".to_string().into(),
+        "guest".to_string().into(),
+    )
+    .await?;
+
     conn.send(client::subscribe(listens, "myid")).await?;
 
     loop {
