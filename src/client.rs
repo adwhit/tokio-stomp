@@ -1,5 +1,3 @@
-use std::net::ToSocketAddrs;
-
 use bytes::{Buf, BytesMut};
 use futures::prelude::*;
 use futures::sink::SinkExt;
@@ -17,13 +15,12 @@ use anyhow::{anyhow, bail};
 /// If successful, returns a tuple of a message stream and a sender,
 /// which may be used to receive and send messages respectively.
 pub async fn connect(
-    server: impl ToSocketAddrs,
+    server: impl tokio::net::ToSocketAddrs,
     host: impl Into<String>,
     login: Option<String>,
     passcode: Option<String>,
 ) -> Result<ClientTransport> {
-    let addr = server.to_socket_addrs()?.next().ok_or(anyhow!("no addresses found"))?;
-    let tcp = TcpStream::connect(&addr).await?;
+    let tcp = TcpStream::connect(server).await?;
     let mut transport = ClientCodec.framed(tcp);
     client_handshake(&mut transport, host.into(), login, passcode).await?;
     Ok(transport)
