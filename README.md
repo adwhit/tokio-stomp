@@ -7,7 +7,7 @@ An async [STOMP](https://stomp.github.io/) client for Rust, using the Tokio stac
 
 It aims to be fast with a simple streaming interface.
 
-[Documentation](https://docs.rs/tokio-stomp/0.3.0/tokio_stomp/)
+[Documentation](https://docs.rs/tokio-stomp/0.4.0/tokio_stomp/)
 
 For full examples, see the examples directory.
 
